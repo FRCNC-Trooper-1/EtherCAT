@@ -473,11 +473,16 @@ else
 
         if command -v ethtool >/dev/null 2>&1; then
             CO=$(ethtool -c "$ETH" 2>/dev/null || true)
-            RXU=$(awk -F: '/^rx-usecs:/{gsub(/ /,"",$2); print $2}' <<<"$CO")
-            if [[ "$RXU" == "0" ]]; then
+            # Strip ALL whitespace, not just spaces — ethtool pads with tabs on
+            # some drivers, which left the value looking non-zero.
+            RXU=$(awk -F: '/^rx-usecs:/{gsub(/[[:space:]]/,"",$2); print $2; exit}' <<<"$CO")
+            if [[ -z "$RXU" ]]; then
+                info "Interrupt coalescing not reported by this driver"
+            elif [[ "$RXU" == "0" ]]; then
                 ok "Interrupt coalescing disabled (rx-usecs 0)"
-            elif [[ -n "$RXU" ]]; then
+            else
                 warn "rx-usecs = ${RXU} — set to 0 to remove coalescing latency"
+                info "sudo ethtool -C ${ETH} rx-usecs 0 tx-usecs 0"
             fi
 
             OFF=$(ethtool -k "$ETH" 2>/dev/null || true)
