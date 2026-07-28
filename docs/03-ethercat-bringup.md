@@ -205,6 +205,39 @@ write-read datagram increments the counter twice. **Check it every cycle.** A
 mismatch means a slave stopped responding — on a CNC that is a fault condition
 requiring a coordinated stop of every axis.
 
+### LRW vs LRD/LWR — some drives cannot accept a combined read/write
+
+By default SOEM sends a single **LRW** datagram covering the combined
+output+input logical address range. This is efficient and works for most
+slaves. **Some drives — Yaskawa Sigma-7 and Sigma-X among them — do not support
+it**, and the symptom is a bus that enumerates perfectly and then produces
+garbage or a wrong working counter once process data starts flowing.
+
+SOEM handles this per slave via `blockLRW`. When set, it emits separate **LRD**
+and **LWR** datagrams instead (and emulates the LRW double-increment on LWR, so
+your working counter arithmetic is unchanged).
+
+`ecx_config_map_group()` sets the flag automatically from the slave's SII
+General section (`src/ec_config.c:371`), so a correctly-programmed EEPROM needs
+no intervention. Not every vendor sets that bit. To force it:
+
+```c
+/* After ecx_config_init(), BEFORE ecx_config_map_group(). */
+for (int i = 1; i <= ctx.slavecount; i++) {
+    ctx.slavelist[i].blockLRW = 1;
+    ctx.slavelist[0].blockLRW++;
+}
+```
+
+`ecx_send_processdata_group()` checks `grouplist[group].blockLRW`
+(`src/ec_main.c:2466`) and switches datagram type accordingly.
+
+> Choosing the normal map over the overlap map does **not** avoid LRW — the
+> combined datagram is used either way. `blockLRW` is the only control.
+>
+> Check whether your drive advertises the SII flag on the bench before assuming
+> either behaviour, and log which datagram type ended up in use.
+
 ### Mailbox handling — new in v2
 
 If a slave's `mbxhandlerstate == ECT_MBXH_CYCLIC`, `ecx_mbxsend()` **queues** the
