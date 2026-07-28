@@ -34,19 +34,83 @@ printf 'host: %s   kernel: %s   date: %s\n' "$(hostname)" "$(uname -r)" "$(date 
 # ---------------------------------------------------------------- kernel ----
 section "1. Kernel"
 
-if [[ -e /sys/kernel/realtime ]] && [[ "$(cat /sys/kernel/realtime 2>/dev/null)" == "1" ]]; then
-    ok "PREEMPT_RT kernel active (/sys/kernel/realtime = 1)"
+# Detect PREEMPT_RT using several signals, most authoritative first.
+#
+# NOTE: /sys/kernel/realtime came from the OUT-OF-TREE RT patchset. Kernels
+# built from mainline PREEMPT_RT (merged in 6.12) generally do NOT create it,
+# so its absence proves nothing on a modern kernel. The kernel config is the
+# only definitive source.
+RT_VERDICT="unknown"
+
+KCONFIG=""
+if [[ -r "/boot/config-$(uname -r)" ]]; then
+    KCONFIG="/boot/config-$(uname -r)"
+fi
+
+if [[ -n "$KCONFIG" ]]; then
+    if grep -q '^CONFIG_PREEMPT_RT=y' "$KCONFIG"; then
+        ok "CONFIG_PREEMPT_RT=y in ${KCONFIG}"
+        RT_VERDICT="rt"
+    else
+        bad "CONFIG_PREEMPT_RT is not set in ${KCONFIG}"
+        RT_VERDICT="not-rt"
+    fi
+elif [[ -r /proc/config.gz ]]; then
+    if zcat /proc/config.gz 2>/dev/null | grep -q '^CONFIG_PREEMPT_RT=y'; then
+        ok "CONFIG_PREEMPT_RT=y in /proc/config.gz"
+        RT_VERDICT="rt"
+    else
+        bad "CONFIG_PREEMPT_RT is not set in /proc/config.gz"
+        RT_VERDICT="not-rt"
+    fi
 else
-    bad "Not a PREEMPT_RT kernel — /sys/kernel/realtime absent or not 1"
+    info "Kernel config not readable — falling back to the version string"
+fi
+
+# Version string: generated at build time from the preemption model, so a
+# reliable secondary signal when the config is unavailable.
+case "$(uname -v)" in
+    *PREEMPT_RT*)
+        ok "Version string reports PREEMPT_RT"
+        [[ "$RT_VERDICT" == "unknown" ]] && RT_VERDICT="rt"
+        ;;
+    *PREEMPT_DYNAMIC*)
+        bad "Version string reports PREEMPT_DYNAMIC — this is NOT PREEMPT_RT"
+        [[ "$RT_VERDICT" == "unknown" ]] && RT_VERDICT="not-rt"
+        ;;
+    *PREEMPT*)
+        warn "Version string reports PREEMPT but not PREEMPT_RT"
+        [[ "$RT_VERDICT" == "unknown" ]] && RT_VERDICT="not-rt"
+        ;;
+    *)
+        warn "No preemption model in the version string"
+        ;;
+esac
+
+# Legacy indicator. Informational only — never a failure on its own.
+if [[ -e /sys/kernel/realtime ]]; then
+    info "/sys/kernel/realtime = $(cat /sys/kernel/realtime 2>/dev/null) (legacy out-of-tree indicator)"
+else
+    info "/sys/kernel/realtime absent — expected on mainline-RT kernels, not a fault"
+fi
+
+if [[ "$RT_VERDICT" == "not-rt" ]]; then
     info "PREEMPT_RT is mainline since Linux 6.12. See docs/02-pc-realtime-setup.md §2."
 fi
 
-case "$(uname -v)" in
-    *PREEMPT_RT*)      ok  "Version string reports PREEMPT_RT" ;;
-    *PREEMPT_DYNAMIC*) bad "Version string reports PREEMPT_DYNAMIC — this is NOT PREEMPT_RT" ;;
-    *PREEMPT*)         warn "Version string reports PREEMPT but not PREEMPT_RT" ;;
-    *)                 bad "No preemption model in version string" ;;
-esac
+# CONFIG_HZ affects the tick rate on non-isolated cores. With hrtimers driving
+# the cyclic task and nohz_full on the isolated cores it is not critical, but
+# a higher value slightly improves housekeeping-core responsiveness.
+if [[ -n "$KCONFIG" ]]; then
+    HZ=$(awk -F= '/^CONFIG_HZ=/{print $2}' "$KCONFIG" 2>/dev/null)
+    if [[ -n "$HZ" ]]; then
+        if (( HZ >= 1000 )); then
+            ok "CONFIG_HZ=${HZ}"
+        else
+            info "CONFIG_HZ=${HZ} (1000 is the common RT choice; minor with nohz_full + hrtimers)"
+        fi
+    fi
+fi
 
 KMAJ=$(uname -r | cut -d. -f1)
 KMIN=$(uname -r | cut -d. -f2)
@@ -219,11 +283,46 @@ else
     else
         DRV=$(basename "$(readlink -f "/sys/class/net/${ETH}/device/driver" 2>/dev/null)" 2>/dev/null || echo "?")
         case "$DRV" in
-            igb|igc|e1000e) ok "Interface ${ETH} driver: ${DRV} (Intel — recommended)" ;;
-            r8169)          warn "Interface ${ETH} driver: r8169 (Realtek — higher jitter, avoid for production)" ;;
-            virtio_net)     bad "Interface ${ETH} driver: virtio_net (virtual — cannot do EtherCAT)" ;;
-            *)              warn "Interface ${ETH} driver: ${DRV} (unrecognised — qualify carefully)" ;;
+            igb|igc|e1000e)
+                ok "Interface ${ETH} driver: ${DRV} (Intel — recommended)"
+                ;;
+            r8169)
+                warn "Interface ${ETH} driver: r8169 (Realtek RTL8111/8168 family)"
+                info "Usable for development and bring-up, NOT recommended for a shipped product."
+                info "The r8169 driver has higher and less predictable latency than Intel igb,"
+                info "and a history of power-management quirks causing sporadic stalls."
+                info "Plan a swap to an Intel i210/i211 before qualification. See docs/01 §1."
+                ;;
+            virtio_net|veth|tun)
+                bad "Interface ${ETH} driver: ${DRV} (virtual — cannot carry EtherCAT)"
+                ;;
+            *)
+                warn "Interface ${ETH} driver: ${DRV} (unrecognised — qualify carefully)"
+                ;;
         esac
+
+        # A product needs a dedicated fieldbus port AND a separate management
+        # port. Count physical wired interfaces to catch the single-NIC case.
+        WIRED=0
+        for d in /sys/class/net/*; do
+            n=$(basename "$d")
+            [[ "$n" == "lo" ]] && continue
+            [[ -e "$d/wireless" || "$n" == wl* ]] && continue
+            wdrv=$(basename "$(readlink -f "$d/device/driver" 2>/dev/null)" 2>/dev/null || echo "")
+            case "$wdrv" in
+                virtio_net|veth|tun|"") continue ;;
+            esac
+            WIRED=$((WIRED + 1))
+        done
+
+        if (( WIRED >= 2 )); then
+            ok "${WIRED} wired interfaces — fieldbus and management can be separated"
+        else
+            warn "Only ${WIRED} wired interface — no separate management port"
+            info "EtherCAT requires a dedicated NIC with no IP stack. With one wired port,"
+            info "the plant network must run over WiFi. Acceptable on a bench; add a second"
+            info "wired NIC (M.2 or PCIe Intel i210/i211) for a shipped machine."
+        fi
 
         # No IP address should be configured on the fieldbus port
         if ip -4 addr show dev "$ETH" 2>/dev/null | grep -q "inet "; then
