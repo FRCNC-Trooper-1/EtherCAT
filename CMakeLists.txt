@@ -77,6 +77,20 @@ target_link_libraries(frcnc_rt
 # rt (real-time clock/timer) is needed for clock_nanosleep on older glibc.
 target_link_libraries(frcnc_rt PUBLIC $<$<PLATFORM_ID:Linux>:rt>)
 
+# ------------------------------------------------------------- drive layer ----
+# CiA 402 state machine. Pure logic — no fieldbus, no I/O, no allocation — so
+# it is exhaustively testable without hardware.
+
+add_library(frcnc_drive STATIC
+    src/drive/cia402.cpp
+)
+
+target_include_directories(frcnc_drive PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+)
+
+target_link_libraries(frcnc_drive PRIVATE frcnc_flags frcnc_rt_flags)
+
 # ------------------------------------------------------------------ tools ----
 
 add_executable(rt_probe src/tools/rt_probe.cpp)
