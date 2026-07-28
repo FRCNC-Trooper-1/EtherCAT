@@ -1,0 +1,48 @@
+# Build output
+build/
+build-*/
+out/
+install/
+_deps/
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+CTestTestfile.cmake
+Testing/
+
+# Object / binary artifacts
+*.o
+*.a
+*.so
+*.so.*
+*.d
+*.gcda
+*.gcno
+
+# Editor / IDE
+.vscode/
+.idea/
+.cache/
+*.swp
+*~
+
+# Runtime logs and captures
+*.log
+logs/
+*.pcap
+*.pcapng
+latency/*.txt
+latency/*.png
+
+# Machine-specific runtime config (operators generate these; never commit)
+config/local/
+*.local.yaml
+
+# Python tooling
+__pycache__/
+*.pyc
+.venv/
+venv/
