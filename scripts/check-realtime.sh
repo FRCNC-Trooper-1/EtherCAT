@@ -45,28 +45,44 @@ section "1. Kernel"
 # the running image, so it cannot be stale or mismatched after a kernel upgrade
 # without reboot.
 
+# Try each source and keep the first that yields real config content. A source
+# can exist and still fail to read (permissions, or a zcat that chokes on the
+# zero-length /proc file), and an empty read must NOT be mistaken for "the
+# symbol is not set" — that would report a genuine RT kernel as failing.
 KCONFIG_SRC=""
-if [[ -r /proc/config.gz ]] && command -v zcat >/dev/null 2>&1; then
-    KCONFIG_SRC="/proc/config.gz"
-elif [[ -r "/boot/config-$(uname -r)" ]]; then
-    KCONFIG_SRC="/boot/config-$(uname -r)"
-fi
+KCONFIG_DATA=""
 
-# Read the kernel config from whichever source is available.
-kconfig() {
-    case "$KCONFIG_SRC" in
-        /proc/config.gz) zcat /proc/config.gz 2>/dev/null ;;
-        "")              return 1 ;;
-        *)               cat "$KCONFIG_SRC" 2>/dev/null ;;
+try_kconfig_source() {
+    local src="$1" data=""
+    case "$src" in
+        /proc/config.gz)
+            [[ -r "$src" ]] || return 1
+            data=$(zcat "$src" 2>/dev/null || gunzip -c "$src" 2>/dev/null || true)
+            ;;
+        *)
+            [[ -r "$src" ]] || return 1
+            data=$(cat "$src" 2>/dev/null || true)
+            ;;
     esac
+    # Sanity-check: a real kernel config has many CONFIG_ lines.
+    if [[ $(grep -c '^CONFIG_' <<<"$data" 2>/dev/null || echo 0) -lt 50 ]]; then
+        return 1
+    fi
+    KCONFIG_SRC="$src"
+    KCONFIG_DATA="$data"
+    return 0
 }
 
-# Is a config symbol set to y?
-kconfig_y() { kconfig | grep -q "^${1}=y"; }
+try_kconfig_source /proc/config.gz \
+    || try_kconfig_source "/boot/config-$(uname -r)" \
+    || true
+
+kconfig_y() { grep -q "^${1}=y" <<<"$KCONFIG_DATA"; }
+kconfig_have() { [[ -n "$KCONFIG_SRC" ]]; }
 
 RT_VERDICT="unknown"
 
-if [[ -n "$KCONFIG_SRC" ]]; then
+if kconfig_have; then
     if kconfig_y CONFIG_PREEMPT_RT; then
         ok "CONFIG_PREEMPT_RT=y (from ${KCONFIG_SRC})"
         RT_VERDICT="rt"
@@ -75,7 +91,9 @@ if [[ -n "$KCONFIG_SRC" ]]; then
         RT_VERDICT="not-rt"
     fi
 else
-    info "Kernel config not readable — falling back to the version string"
+    warn "Kernel config unreadable — relying on the version string"
+    info "Checked /proc/config.gz and /boot/config-\$(uname -r)."
+    info "A missing config is not itself a fault; it only limits what can be verified."
 fi
 
 # Version string: generated at build time from the preemption model, so a
@@ -109,8 +127,8 @@ if [[ "$RT_VERDICT" == "not-rt" ]]; then
     info "PREEMPT_RT is mainline since Linux 6.12. See docs/02-pc-realtime-setup.md §2."
 fi
 
-if [[ -n "$KCONFIG_SRC" ]]; then
-    HZ=$(kconfig | awk -F= '/^CONFIG_HZ=/{print $2}')
+if kconfig_have; then
+    HZ=$(awk -F= '/^CONFIG_HZ=/{print $2}' <<<"$KCONFIG_DATA")
     if [[ -n "$HZ" ]]; then
         if (( HZ >= 1000 )); then
             ok "CONFIG_HZ=${HZ}"
@@ -152,15 +170,21 @@ fi
 # ------------------------------------------------------------ virtualized ----
 section "2. Platform"
 
-VIRT="none"
+# NOTE: systemd-detect-virt prints "none" AND exits 1 on bare metal, so a
+# `|| echo none` fallback appends a second "none" and the comparison breaks.
+# Capture the output and ignore the exit status instead.
+VIRT=""
 if command -v systemd-detect-virt >/dev/null 2>&1; then
-    VIRT=$(systemd-detect-virt 2>/dev/null || echo none)
+    VIRT=$(systemd-detect-virt 2>/dev/null) || true
 fi
-if [[ "$VIRT" != "none" ]]; then
+VIRT=$(tr -d '[:space:]' <<<"${VIRT}")
+: "${VIRT:=none}"
+
+if [[ "$VIRT" == "none" ]]; then
+    ok "Running on bare metal"
+else
     bad "Running under virtualization: ${VIRT}"
     info "A VM cannot meet EtherCAT latency requirements. Use bare metal."
-else
-    ok "Running on bare metal"
 fi
 
 # ------------------------------------------------------------------- cpu ----
@@ -183,7 +207,7 @@ NOHZ=$(cat /sys/devices/system/cpu/nohz_full 2>/dev/null || echo "")
 NOHZ_ON_CMDLINE=false
 grep -q "nohz_full=" <<<"$CMDLINE" && NOHZ_ON_CMDLINE=true
 
-if [[ -n "$KCONFIG_SRC" ]] && ! kconfig_y CONFIG_NO_HZ_FULL; then
+if kconfig_have && ! kconfig_y CONFIG_NO_HZ_FULL; then
     if $NOHZ_ON_CMDLINE; then
         bad "nohz_full= is on the command line but CONFIG_NO_HZ_FULL is not set"
         info "The parameter is SILENTLY IGNORED by this kernel — it does nothing."
