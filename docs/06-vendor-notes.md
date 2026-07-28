@@ -56,15 +56,45 @@ printf("slave %d mbx_proto=0x%04x CoEdetails=0x%02x SoEdetails=0x%02x\n",
 This is authoritative for the actual hardware in front of you, including a
 custom-spec unit.
 
-### ⚠️ LRW is not supported — this one will cost you days
+### ⚠️ LRW is not supported — CONFIRMED in the manual
 
-Yaskawa Sigma drives **do not accept a combined LRW logical read/write**.
-Working IgH configurations create two separate domains, with the source comment
-*"yaskawa drive requires separated domain"*, and LinuxCNC users report the same.
+**Source: SGD7S EtherCAT (CoE) Communications Reference, verbatim:**
 
-SOEM sends LRW by default. See
+> APRD, FPRD, BRD, LRD, APWR, FPWR, BWR, LWR, ARMW, and FRMW
+> **(APRW, FPRW, BRW, and LRW commands are not supported.)**
+
+and, in §12.2:
+
+> The SERVOPACK does not support EtherCAT Read/Write commands
+> (APRW, FPRW, BRW, and **LRW**).
+
+This is now manufacturer-confirmed, not community folklore. **SOEM sends LRW by
+default** — see
 [`03-ethercat-bringup.md`](03-ethercat-bringup.md#lrw-vs-lrdlwr--some-drives-cannot-accept-a-combined-readwrite)
-for the `blockLRW` fix. **Plan for this from day one.**
+for the `blockLRW` fix. **Mandatory for these drives.**
+
+### Sync Manager and FMMU layout (fixed)
+
+| Sync Manager | Assignment | Size | Start address |
+|---|---|---|---|
+| SM0 | Receive mailbox | 128 bytes (fixed) | `0x1000` |
+| SM1 | Transmit mailbox | 128 bytes (fixed) | `0x1080` |
+| SM2 | Receive PDOs (RxPDO) | 0–256 bytes | `0x1100` |
+| SM3 | Transmit PDOs (TxPDO) | 0–256 bytes | `0x1400` |
+
+FMMU0 → RxPDO area, FMMU1 → TxPDO area, FMMU2 → mailbox status.
+
+### ⚠️ SDO writes to PDO-mapped objects are silently ignored
+
+From the trial-operation procedure, repeated several times:
+
+> Manipulate the objects that were mapped to PDOs.
+> **Values will not be written if you manipulate SDOs.**
+
+Once an object is mapped into a PDO, writing it over SDO does nothing — and
+does not error. Configure via SDO in `PRE-OP`, then drive everything mapped
+through process data. A "why is my controlword being ignored" session usually
+ends here.
 
 ### ⚠️ Sigma-X dropping to PRE-OP after servo-on
 
@@ -108,22 +138,102 @@ For a CNC, prefer `0x1A00` over `0x1A01` — it already carries `60F4` (followin
 error) and `6061` (modes display), both of which you want cyclically rather
 than over SDO. See [`04 §4`](04-drive-cia402.md#4-csp-process-data).
 
-### Distributed Clocks — Sigma-7 reference values
+### ✅ Cycle time and `0x60C2` — both resolved from the manual
 
-From a working IgH configuration:
+**Supported DC cycles (manual, verbatim):**
 
-```c
-AssignActivate = 0x0300      /* Sync0 enabled, Sync1 unused */
-Sync0 shift    = 150000 ns   /* 150 us */
-```
+> Free-Run Mode and DC Mode (Can be switched.)
+> **Applicable DC cycles: 125 μs to 4 ms in 125-μs increments**
 
-The drive can serve as the DC reference clock. Free-run (SM-synchronous)
-operation also works, but use DC for coordinated CSP.
+So 125 µs, 250 µs, 375 µs, 500 µs … 4 ms. **250 µs is supported. So is 125 µs.**
+
+**`0x60C2` is READ-WRITE** — from the object dictionary table:
+
+| Index | Sub | Name | Access | PDO map | Type |
+|---|---|---|---|---|---|
+| `60C2h` | 1 | Interpolation time period value | **RW** | No | USINT |
+| `60C2h` | 2 | Interpolation time index | **RW** | No | SINT |
+
+**The drive does not pin your cycle time.** This was the single biggest open
+risk on the BOM and it is closed. You set the machine's cycle; the drive follows.
+
+### Distributed Clocks
+
+Mode is selected in the ESC Sync Control registers (`0x980`/`0x981`):
+
+- **Free-Run** — `0x980 = 0x0000`, local cycle independent of the master
+- **DC Mode** — `0x980 = 0x0300`, synchronized to Sync0
+
+`0x0300` matches the AssignActivate value used by working IgH configurations,
+which also use a **150 µs Sync0 shift**. The drive can serve as the DC reference
+clock. Use DC for coordinated CSP; free-run exists but is not appropriate for
+contouring.
+
+### PDO mapping is writable only in PRE-OP
+
+Manual, verbatim:
+
+> The PDO mapping objects (indexes 1600h to 1603h and 1A00h to 1A03h) and the
+> Sync Manager PDO assignment objects (index 1C12h and 1C13h) **can be written
+> only in Pre-Operational state.**
+
+This confirms the configuration sequence in
+[`04 §5`](04-drive-cia402.md#5-pdo-configuration) — do it all in the
+`PO2SOconfig` hook.
+
+### Supported CiA 402 modes
+
+Homing, Profile Position, Interpolated Position, Profile Velocity, Profile
+Torque, **Cyclic Synchronous Position**, Cyclic Synchronous Velocity, Cyclic
+Synchronous Torque, Touch Probe, Torque Limit.
 
 ### Modes of operation — do not trust the default
 
 One documented unit shipped defaulting to **mode 9 (CSV)**, not 8 (CSP).
 **Always write `0x6060` explicitly and wait for `0x6061` to echo it.**
+
+### ⚠️ Scaling uses manufacturer objects, NOT the CiA 402 standard ones
+
+This is the finding most likely to produce wrong parts.
+
+[`04 §6`](04-drive-cia402.md#6-configuration-objects) describes the standard
+scaling chain — `0x6091` gear ratio, `0x6092` feed constant, `0x608F` encoder
+resolution. **Yaskawa does not use those.** It uses manufacturer-specific
+objects:
+
+| Index | Purpose |
+|---|---|
+| `2701h` | **Position user unit** — sub 1 Numerator, sub 2 Denominator |
+| `2702h` | Velocity user unit |
+| `2703h` | Acceleration user unit |
+| `2704h` | Torque user unit |
+| `2705h` | Encoder selection |
+
+```
+2701h:01  Numerator    UDINT  RW  1 to 1,073,741,823  (default 1)
+2701h:02  Denominator  UDINT  RW  1 to 1,073,741,823  (default 1)
+```
+
+**Constraint:** `1/4096 < Numerator/Denominator < 65536`. Outside that range the
+drive raises alarm **A.A20 (Parameter Setting Error)**.
+
+### ⚠️ A 24-bit encoder does not give you 24 bits
+
+From §5.14.1, verbatim:
+
+> For a Rotary Servomotor with an encoder resolution of 24 bits (16,777,216),
+> Pn20E (Electronic Gear Ratio (Numerator)) is automatically set to 16 and
+> Pn210 (Electronic Gear Ratio (Denominator)) is automatically set to 1.
+> **Therefore, the encoder resolution will be equivalent to 20 bits (1,048,576).**
+
+The drive silently applies a 16:1 electronic gear, so a 24-bit encoder presents
+**1,048,576 counts/rev**, not 16,777,216.
+
+Get this wrong in your counts-per-mm and **every axis is off by a factor of 16**.
+Verify empirically on the bench: command a known move, measure the actual travel,
+and confirm the arithmetic before trusting any datasheet number. This is exactly
+why [`05 §5`](05-motion-architecture.md#5-kinematics-and-units) recommends doing
+unit conversion in the master rather than in the drive.
 
 ### Encoder — batteryless absolute ✅
 
@@ -182,19 +292,37 @@ Filename: `Yaskawa_SGDXS-xxxxA0x.xml`
 | Sigma-7 single-axis 200 V EtherCAT product code | `0x02200301` |
 | Sigma-X product code | **UNVERIFIED** |
 
-### Open questions — resolve before committing to a BOM
+### Identity (confirmed, object `1018h`)
+
+| Sub | Field | Value |
+|---|---|---|
+| 1 | Vendor ID | `0x00000539` |
+| 2 | Product code (SGD7S) | `0x02200301` |
+| 3 | Revision | bits 31–16 major, 15–0 minor |
+| 4 | Serial number | always `0x00000000` — not used |
+
+### Open questions
+
+Resolved from the SGD7S manual: cycle time, `0x60C2` access, LRW, PDO mapping
+state restriction, SM/FMMU layout, identity, scaling objects.
+
+Still open:
 
 1. **What does `Y3600A` change?** Custom/BTO codes can alter the object
    dictionary, default PDO assignment, parameter write access, or firmware.
    Get the BTO datasheet from Yaskawa quoting the full model string. **If no one
    will produce that document, treat the part as unqualified.**
-2. **Minimum EtherCAT cycle time for SGDXS.** No figure obtained. If the design
-   depends on 250 µs, this is a blocker.
-3. **Is `0x60C2` writable?** No information found. A fixed value pins the entire
-   machine's cycle time.
-4. **Sigma-X PDO mappings and product code** — all mapping data above is
-   Sigma-**7**.
-5. **Do `0x1C12`/`0x1C13` require SDO Complete Access?** Try CA first, fall back.
+2. **Does Sigma-X match Sigma-7?** Everything confirmed above is from the
+   **SGD7S** manual. Sigma-X is a different generation — for SGDXS, get
+   `SIEP C710812 02` and re-verify at minimum the DC cycle range, `0x60C2`
+   access, and whether LRW is still unsupported.
+3. **Do `0x1C12`/`0x1C13` require SDO Complete Access?** Not mentioned in the
+   manual. Try CA first, fall back to per-subindex.
+4. **Sigma-X product code** — unknown.
+
+> **Note on `10F1h` (Sync error setting).** Present in the object dictionary.
+> This is the knob behind the Sigma-X PRE-OP drop-out workaround. Treat a
+> climbing sync error counter as a timing problem to fix, not a check to disable.
 
 ### Sigma-7 vs Sigma-X for a first build
 
