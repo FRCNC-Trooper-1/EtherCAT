@@ -56,22 +56,42 @@ printf("slave %d mbx_proto=0x%04x CoEdetails=0x%02x SoEdetails=0x%02x\n",
 This is authoritative for the actual hardware in front of you, including a
 custom-spec unit.
 
-### ⚠️ LRW is not supported — CONFIRMED in the manual
+### ⚠️ LRW — Sigma-7 does NOT support it, Sigma-X DOES
 
-**Source: SGD7S EtherCAT (CoE) Communications Reference, verbatim:**
+This differs between generations. Both statements are quoted from the
+manufacturer's own EtherCAT specification tables.
+
+**Sigma-7 (SGD7S)** — SIEP S800001 xx:
 
 > APRD, FPRD, BRD, LRD, APWR, FPWR, BWR, LWR, ARMW, and FRMW
 > **(APRW, FPRW, BRW, and LRW commands are not supported.)**
 
-and, in §12.2:
+and in §12.2:
 
 > The SERVOPACK does not support EtherCAT Read/Write commands
 > (APRW, FPRW, BRW, and **LRW**).
 
-This is now manufacturer-confirmed, not community folklore. **SOEM sends LRW by
-default** — see
+**Sigma-X (SGDXS)** — SIEP C710812 02:
+
+> APRD, APWR, **APRW**, FPRD, FPWR, **FPRW**, BRD, BWR, **BRW**,
+> LRD, LWR, **LRW**, ARMW, FRMW
+
+No exclusion clause. **Sigma-X fixed the limitation.**
+
+| | LRW | `blockLRW` needed? |
+|---|---|---|
+| Sigma-7 (SGD7S) | ✗ Not supported | **Yes — mandatory** |
+| Sigma-X (SGDXS) | ✓ Supported | No |
+
+See
 [`03-ethercat-bringup.md`](03-ethercat-bringup.md#lrw-vs-lrdlwr--some-drives-cannot-accept-a-combined-readwrite)
-for the `blockLRW` fix. **Mandatory for these drives.**
+for the fix.
+
+> **Mixing generations on one bus:** `blockLRW` is per-slave, but
+> `ecx_config_map_group()` promotes it to the group
+> (`grouplist[group].blockLRW`). One Sigma-7 anywhere on the segment drops the
+> **entire group** to LRD/LWR. Functionally fine, marginally less efficient —
+> but know that it is happening rather than discovering it in a frame capture.
 
 ### Sync Manager and FMMU layout (fixed)
 
@@ -138,24 +158,44 @@ For a CNC, prefer `0x1A00` over `0x1A01` — it already carries `60F4` (followin
 error) and `6061` (modes display), both of which you want cyclically rather
 than over SDO. See [`04 §4`](04-drive-cia402.md#4-csp-process-data).
 
-### ✅ Cycle time and `0x60C2` — both resolved from the manual
+### ✅ Cycle time and `0x60C2` — resolved for both generations
 
-**Supported DC cycles (manual, verbatim):**
+**Supported DC cycles:**
 
-> Free-Run Mode and DC Mode (Can be switched.)
-> **Applicable DC cycles: 125 μs to 4 ms in 125-μs increments**
+| Generation | Manual, verbatim |
+|---|---|
+| Sigma-7 | Applicable DC cycles: **125 μs to 4 ms in 125-μs increments** |
+| Sigma-X | Applicable DC cycles: **62.5 μs to 4 ms in 62.5-μs increments** |
 
-So 125 µs, 250 µs, 375 µs, 500 µs … 4 ms. **250 µs is supported. So is 125 µs.**
+Both support free-run and DC mode, switchable. **250 µs is comfortably within
+range on either.** Sigma-X resolves twice as finely.
 
-**`0x60C2` is READ-WRITE** — from the object dictionary table:
+**`0x60C2` is READ-WRITE on both.** Sigma-X object dictionary:
 
-| Index | Sub | Name | Access | PDO map | Type |
-|---|---|---|---|---|---|
-| `60C2h` | 1 | Interpolation time period value | **RW** | No | USINT |
-| `60C2h` | 2 | Interpolation time index | **RW** | No | SINT |
+| Index | Sub | Name | Type | Access | Range | Default |
+|---|---|---|---|---|---|---|
+| `60C2h` | 0 | Number of entries | USINT | RO | — | 2 |
+| `60C2h` | 1 | Interpolation time period value | USINT | **RW** | 1 to 250 | **125** |
+| `60C2h` | 2 | Interpolation time index | SINT | **RW** | −6 to −3 | **−6** |
+
+Period = `value × 10^index` seconds. The default `125 × 10⁻⁶` is **125 µs**.
+
+| Target cycle | value | index |
+|---|---|---|
+| 125 µs | 125 | −6 |
+| 250 µs | 250 | −6 |
+| 500 µs | 50 | −5 |
+| 1 ms | 100 | −5 |
+| 4 ms | 4 | −3 |
 
 **The drive does not pin your cycle time.** This was the single biggest open
-risk on the BOM and it is closed. You set the machine's cycle; the drive follows.
+risk on the BOM and it is closed on both generations. You set the machine's
+cycle; the drive follows.
+
+> Note the default is **125 µs**, not 1 ms. If you bring a drive up at a 1 ms
+> master cycle without writing `0x60C2`, the drive expects a new setpoint every
+> 125 µs and will interpolate against a period eight times shorter than reality.
+> **Always write `0x60C2` explicitly.**
 
 ### Distributed Clocks
 
@@ -301,24 +341,55 @@ Filename: `Yaskawa_SGDXS-xxxxA0x.xml`
 | 3 | Revision | bits 31–16 major, 15–0 minor |
 | 4 | Serial number | always `0x00000000` — not used |
 
+### Sigma-7 vs Sigma-X — confirmed differences
+
+Both verified from their own manuals (SIEP S800001 xx and SIEP C710812 02).
+
+| | Sigma-7 (SGD7S) | Sigma-X (SGDXS) |
+|---|---|---|
+| **LRW** | ✗ Not supported | ✓ **Supported** |
+| **DC cycle range** | 125 µs – 4 ms, 125 µs steps | **62.5 µs** – 4 ms, 62.5 µs steps |
+| `0x60C2` | RW | RW, default 125 µs |
+| Scaling objects | `2701h`–`2704h` | `2701h`–`2704h` (unchanged) |
+| SubDevice Information IF | 256 bytes | **4 KB** |
+| CiA 402 modes | HM, PP, IP, PV, PT, CSP, CSV, CST | Identical |
+| Terminology | Master / Slave | **MainDevice / SubDevice** |
+| Extras | — | Σ-LINK II, FSoE Advanced Safety Module |
+
+Scaling is unchanged between generations — Sigma-X still uses the
+manufacturer-specific `2701h` position user unit, **not** the CiA 402
+`0x6091`/`0x6092`/`0x608F`.
+
+> Sigma-X §5.18 adds *"Σ-V/Σ-7 Compatible Function and Settings"*, including
+> **Encoder Resolution Compatibility Selection**. That strongly implies Sigma-X's
+> native encoder resolution differs from Sigma-7's, with a compatibility mode for
+> retrofits. **Verify counts-per-rev empirically on the bench** rather than
+> carrying a Sigma-7 number across.
+
+### SDO Complete Access
+
+Not stated as required, but the abort-code table confirms it is implemented and
+that objects may refuse it:
+
+| Abort code | Meaning |
+|---|---|
+| `0x06010004` | The object cannot be accessed through complete access |
+| `0x06010003` | The entry was not written because the subindex was other than 0 |
+
+The second is the classic **"zero subindex 0 before writing entries"** rule from
+[`04 §5`](04-drive-cia402.md#5-pdo-configuration). Try CA first, fall back to
+per-subindex on `0x06010004`.
+
 ### Open questions
 
-Resolved from the SGD7S manual: cycle time, `0x60C2` access, LRW, PDO mapping
-state restriction, SM/FMMU layout, identity, scaling objects.
-
-Still open:
-
-1. **What does `Y3600A` change?** Custom/BTO codes can alter the object
-   dictionary, default PDO assignment, parameter write access, or firmware.
-   Get the BTO datasheet from Yaskawa quoting the full model string. **If no one
-   will produce that document, treat the part as unqualified.**
-2. **Does Sigma-X match Sigma-7?** Everything confirmed above is from the
-   **SGD7S** manual. Sigma-X is a different generation — for SGDXS, get
-   `SIEP C710812 02` and re-verify at minimum the DC cycle range, `0x60C2`
-   access, and whether LRW is still unsupported.
-3. **Do `0x1C12`/`0x1C13` require SDO Complete Access?** Not mentioned in the
-   manual. Try CA first, fall back to per-subindex.
-4. **Sigma-X product code** — unknown.
+1. **What does `Y3600A` change?** Still unknown, and still the largest risk.
+   Custom/BTO codes can alter the object dictionary, default PDO assignment,
+   parameter write access, or firmware. Get the BTO datasheet from Yaskawa
+   quoting the full model string. **If no one will produce that document, treat
+   the part as unqualified.**
+2. **Sigma-X product code** (`1018h:02`) — the manual section exists at p636 but
+   the value was not captured. Read it off the drive with `slaveinfo`.
+3. **Sigma-X native encoder resolution** — see the compatibility-mode note above.
 
 > **Note on `10F1h` (Sync error setting).** Present in the object dictionary.
 > This is the knob behind the Sigma-X PRE-OP drop-out workaround. Treat a
