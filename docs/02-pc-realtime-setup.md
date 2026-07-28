@@ -62,17 +62,25 @@ For a **commercial product** this matters twice over:
 ### 2.1 Verify what you are running
 
 ```bash
-uname -a
-# PREEMPT_RT must appear in the version string on a correctly built RT kernel.
+# Authoritative — the config embedded in the running kernel image.
+zcat /proc/config.gz | grep CONFIG_PREEMPT_RT
+# expect: CONFIG_PREEMPT_RT=y
 
-# Definitive check — this file exists only on a PREEMPT_RT kernel:
-cat /sys/kernel/realtime    # must print: 1
+# Fallback if /proc/config.gz is unavailable (needs CONFIG_IKCONFIG_PROC=y):
+grep CONFIG_PREEMPT_RT "/boot/config-$(uname -r)"
+
+# Secondary signal — generated at build time from CONFIG_PREEMPT_RT:
+uname -v | grep PREEMPT_RT
 ```
 
 `PREEMPT_DYNAMIC` is **not** `PREEMPT_RT`. A stock Ubuntu kernel reports
-`PREEMPT_DYNAMIC` and will not meet the latency budget above. If
-`/sys/kernel/realtime` does not exist, you do not have a real-time kernel,
-regardless of what the version string suggests.
+`PREEMPT_DYNAMIC` and will not meet the latency budget above.
+
+> **Do not test `/sys/kernel/realtime`.** Widely repeated advice says to check
+> that file for `1`. It was never in mainline — it came from the out-of-tree RT
+> patchset and disappeared once RT kernels became mainline-based in 6.12. On any
+> modern RT kernel it is simply absent, and treating that as failure gives a
+> false negative. Use the kernel config.
 
 ### 2.2 Building a mainline RT kernel (Ubuntu 24.04)
 
@@ -200,12 +208,90 @@ What each flag buys you:
 > hides genuine hardware faults. Consider `mce=ignore_ce` instead for production
 > machines where you want ECC errors surfaced. Make this call deliberately.
 
-Verify after reboot:
+### 4.1 Check the kernel config first — some parameters are silently ignored
+
+**`nohz_full=` only works if the kernel was built with `CONFIG_NO_HZ_FULL=y`.**
+If it was not, the parameter appears on the command line, `/proc/cmdline` shows
+it, and it **does nothing at all**. There is no warning.
+
+This is not a corner case. Several popular prebuilt RT kernels — including
+**XanMod's `-rt` builds** — ship `CONFIG_NO_HZ_IDLE=y` instead, so tickless
+isolation is unavailable no matter what you put on the command line.
+
+Check before you tune:
+
+```bash
+# /proc/config.gz is authoritative — it is embedded in the running kernel.
+zcat /proc/config.gz | grep -E 'CONFIG_NO_HZ|CONFIG_PREEMPT_RT|CONFIG_HZ=|CONFIG_CPU_ISOLATION|CONFIG_RCU_NOCB_CPU|CONFIG_HWLAT_TRACER'
+```
+
+| Symbol | Needed for |
+|---|---|
+| `CONFIG_PREEMPT_RT=y` | Real-time preemption — **mandatory** |
+| `CONFIG_NO_HZ_FULL=y` | `nohz_full=` — without it the parameter is ignored |
+| `CONFIG_CPU_ISOLATION=y` | `isolcpus=` |
+| `CONFIG_RCU_NOCB_CPU=y` | `rcu_nocbs=` |
+| `CONFIG_HWLAT_TRACER=y` | `hwlatdetect` |
+| `CONFIG_IKCONFIG_PROC=y` | `/proc/config.gz` itself |
+
+If `CONFIG_NO_HZ_FULL` is missing, you have two choices: accept it (`isolcpus`
+and `rcu_nocbs` still work and deliver most of the benefit), or build your own
+kernel. For a shipped product you will want your own pinned kernel build anyway —
+see §2.2.
+
+> **Do not use `/sys/kernel/realtime` to detect an RT kernel.** That file was
+> never part of mainline; it existed only in the out-of-tree patchset and
+> disappeared from RT kernels once they became mainline-based in 6.12. Its
+> absence proves nothing. There is currently no sysfs interface in mainline that
+> reports the preemption model — use `/proc/config.gz`, or `PREEMPT_RT` in
+> `uname -v` (which is generated at build time from `CONFIG_PREEMPT_RT`).
+
+### 4.2 AMD processors
+
+The command line in §4 is Intel-specific in two places. On AMD,
+`intel_pstate=disable` and `intel_idle.max_cstate=0` are **silently
+meaningless** — neither driver ever loads. There is no `amd_idle` driver at all;
+AMD uses `acpi_idle`.
+
+Replace those two flags with:
+
+```bash
+# AMD equivalent of the frequency/idle portion
+amd_pstate=passive amd_prefcore=disable processor.max_cstate=1 iommu.passthrough=1
+```
+
+| Flag | Effect |
+|---|---|
+| `amd_pstate=passive` | The governor requests the performance level instead of the hardware choosing autonomously. The common default is `active` (EPP), which is the **least** deterministic mode. `amd_pstate=disable` falls back to `acpi-cpufreq`, also fine. |
+| `amd_prefcore=disable` | Stops firmware biasing work toward "preferred" cores — irrelevant once threads are pinned, but removes a variable |
+| `processor.max_cstate=1` | Drives `acpi_idle`, and **works on both vendors**. Use `1`, not `0` — the kernel clamps `0` to `1` anyway |
+| `iommu.passthrough=1` | Bypasses DMA translation. Lazy IOTLB invalidation (the common default) batches flushes, and those flushes are latency spikes on the NIC's DMA path |
+
+Also worth setting at runtime, since boost causes clock transitions:
+
+```bash
+echo 0 | sudo tee /sys/devices/system/cpu/cpufreq/boost      # flatter clock beats higher peak
+cat /sys/devices/system/cpu/amd_pstate/status                # expect: passive
+```
+
+> ⚠️ **You cannot count SMIs on AMD.** The SMI counter (`MSR 0x34`,
+> `perf stat -e msr/smi/`, turbostat's `SMI` column) is **Intel-only**. AMD
+> platforms absolutely do take SMIs — BMC, thermal, and fTPM are common sources,
+> and Ryzen fTPM in particular has a documented reputation for periodic stalls —
+> you simply cannot enumerate them. **Measure the symptom instead** with
+> `hwlatdetect`, `osnoise`, and `timerlat`. This makes `hwlatdetect` more
+> important on AMD, not less.
+
+### 4.3 Verify after reboot
 
 ```bash
 cat /proc/cmdline
 cat /sys/devices/system/cpu/isolated     # expect: 2-3
-cat /sys/devices/system/cpu/nohz_full    # expect: 2-3
+cat /sys/devices/system/cpu/nohz_full    # expect: 2-3, or empty if CONFIG_NO_HZ_FULL is off
+
+# The TSC must stay the clocksource. A demotion to hpet/acpi_pm makes every
+# clock read far more expensive and RT latency collapses.
+cat /sys/devices/system/clocksource/clocksource0/current_clocksource   # expect: tsc
 ```
 
 ---

@@ -36,31 +36,42 @@ section "1. Kernel"
 
 # Detect PREEMPT_RT using several signals, most authoritative first.
 #
-# NOTE: /sys/kernel/realtime came from the OUT-OF-TREE RT patchset. Kernels
-# built from mainline PREEMPT_RT (merged in 6.12) generally do NOT create it,
-# so its absence proves nothing on a modern kernel. The kernel config is the
-# only definitive source.
-RT_VERDICT="unknown"
+# NOTE: /sys/kernel/realtime was NEVER part of mainline Linux. It came from the
+# out-of-tree RT patchset only, and disappeared from RT kernels the moment they
+# became mainline-based (6.12+). Its absence proves nothing. There is currently
+# NO sysfs interface in mainline that reports the preemption model.
+#
+# /proc/config.gz is preferred over /boot/config-$(uname -r): it is embedded in
+# the running image, so it cannot be stale or mismatched after a kernel upgrade
+# without reboot.
 
-KCONFIG=""
-if [[ -r "/boot/config-$(uname -r)" ]]; then
-    KCONFIG="/boot/config-$(uname -r)"
+KCONFIG_SRC=""
+if [[ -r /proc/config.gz ]] && command -v zcat >/dev/null 2>&1; then
+    KCONFIG_SRC="/proc/config.gz"
+elif [[ -r "/boot/config-$(uname -r)" ]]; then
+    KCONFIG_SRC="/boot/config-$(uname -r)"
 fi
 
-if [[ -n "$KCONFIG" ]]; then
-    if grep -q '^CONFIG_PREEMPT_RT=y' "$KCONFIG"; then
-        ok "CONFIG_PREEMPT_RT=y in ${KCONFIG}"
+# Read the kernel config from whichever source is available.
+kconfig() {
+    case "$KCONFIG_SRC" in
+        /proc/config.gz) zcat /proc/config.gz 2>/dev/null ;;
+        "")              return 1 ;;
+        *)               cat "$KCONFIG_SRC" 2>/dev/null ;;
+    esac
+}
+
+# Is a config symbol set to y?
+kconfig_y() { kconfig | grep -q "^${1}=y"; }
+
+RT_VERDICT="unknown"
+
+if [[ -n "$KCONFIG_SRC" ]]; then
+    if kconfig_y CONFIG_PREEMPT_RT; then
+        ok "CONFIG_PREEMPT_RT=y (from ${KCONFIG_SRC})"
         RT_VERDICT="rt"
     else
-        bad "CONFIG_PREEMPT_RT is not set in ${KCONFIG}"
-        RT_VERDICT="not-rt"
-    fi
-elif [[ -r /proc/config.gz ]]; then
-    if zcat /proc/config.gz 2>/dev/null | grep -q '^CONFIG_PREEMPT_RT=y'; then
-        ok "CONFIG_PREEMPT_RT=y in /proc/config.gz"
-        RT_VERDICT="rt"
-    else
-        bad "CONFIG_PREEMPT_RT is not set in /proc/config.gz"
+        bad "CONFIG_PREEMPT_RT is not set (from ${KCONFIG_SRC})"
         RT_VERDICT="not-rt"
     fi
 else
@@ -98,17 +109,35 @@ if [[ "$RT_VERDICT" == "not-rt" ]]; then
     info "PREEMPT_RT is mainline since Linux 6.12. See docs/02-pc-realtime-setup.md §2."
 fi
 
-# CONFIG_HZ affects the tick rate on non-isolated cores. With hrtimers driving
-# the cyclic task and nohz_full on the isolated cores it is not critical, but
-# a higher value slightly improves housekeeping-core responsiveness.
-if [[ -n "$KCONFIG" ]]; then
-    HZ=$(awk -F= '/^CONFIG_HZ=/{print $2}' "$KCONFIG" 2>/dev/null)
+if [[ -n "$KCONFIG_SRC" ]]; then
+    HZ=$(kconfig | awk -F= '/^CONFIG_HZ=/{print $2}')
     if [[ -n "$HZ" ]]; then
         if (( HZ >= 1000 )); then
             ok "CONFIG_HZ=${HZ}"
         else
-            info "CONFIG_HZ=${HZ} (1000 is the common RT choice; minor with nohz_full + hrtimers)"
+            info "CONFIG_HZ=${HZ} (1000 is the common RT choice; minor with hrtimers)"
         fi
+    fi
+
+    # Latency tracers — needed to diagnose firmware-induced stalls.
+    if kconfig_y CONFIG_HWLAT_TRACER; then
+        ok "CONFIG_HWLAT_TRACER=y (hwlatdetect available)"
+    else
+        warn "CONFIG_HWLAT_TRACER not set — hwlatdetect will not work"
+    fi
+fi
+
+# The TSC must remain the clocksource. If the kernel demotes it to HPET or
+# acpi_pm, timekeeping cost rises sharply and RT latency collapses.
+CS_FILE=/sys/devices/system/clocksource/clocksource0/current_clocksource
+if [[ -r "$CS_FILE" ]]; then
+    CS=$(cat "$CS_FILE")
+    if [[ "$CS" == "tsc" ]]; then
+        ok "Clocksource: tsc"
+    else
+        bad "Clocksource: ${CS} — expected 'tsc'"
+        info "A demoted TSC makes every clock read far more expensive."
+        info "Check dmesg for 'Clocksource tsc unstable' / 'TSC halt'."
     fi
 fi
 
@@ -146,11 +175,28 @@ else
     bad "No isolated CPUs — add isolcpus= to the kernel command line"
 fi
 
+# nohz_full= is SILENTLY IGNORED unless the kernel was built with
+# CONFIG_NO_HZ_FULL=y. Several popular prebuilt RT kernels (XanMod's -rt among
+# them) ship CONFIG_NO_HZ_IDLE instead, so the parameter looks applied on the
+# command line but does nothing at all.
 NOHZ=$(cat /sys/devices/system/cpu/nohz_full 2>/dev/null || echo "")
-if [[ -n "$NOHZ" && "$NOHZ" != "(null)" ]]; then
+NOHZ_ON_CMDLINE=false
+grep -q "nohz_full=" <<<"$CMDLINE" && NOHZ_ON_CMDLINE=true
+
+if [[ -n "$KCONFIG_SRC" ]] && ! kconfig_y CONFIG_NO_HZ_FULL; then
+    if $NOHZ_ON_CMDLINE; then
+        bad "nohz_full= is on the command line but CONFIG_NO_HZ_FULL is not set"
+        info "The parameter is SILENTLY IGNORED by this kernel — it does nothing."
+    else
+        warn "CONFIG_NO_HZ_FULL not set — nohz_full= is unavailable on this kernel"
+    fi
+    info "isolcpus= and rcu_nocbs= still work and give most of the benefit."
+    info "For full tickless isolation, build a kernel with CONFIG_NO_HZ_FULL=y."
+    info "See docs/02-pc-realtime-setup.md §4.1."
+elif [[ -n "$NOHZ" && "$NOHZ" != "(null)" ]]; then
     ok "nohz_full CPUs: ${NOHZ}"
 else
-    warn "nohz_full not set — the 1 kHz scheduler tick still interrupts control cores"
+    warn "nohz_full not set — the scheduler tick still interrupts control cores"
 fi
 
 for opt in rcu_nocbs irqaffinity; do
@@ -186,16 +232,86 @@ else
     ok "No cpufreq control exposed (CPU_FREQ disabled, or fixed by firmware)"
 fi
 
-if grep -q "intel_pstate=disable" <<<"$CMDLINE"; then
-    ok "intel_pstate disabled"
+CPU_VENDOR=$(awk -F: '/^vendor_id/{gsub(/ /,"",$2); print $2; exit}' /proc/cpuinfo)
+SCALING_DRIVER=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_driver 2>/dev/null || echo "none")
+info "CPU vendor: ${CPU_VENDOR:-unknown}, cpufreq driver: ${SCALING_DRIVER}"
+
+case "$CPU_VENDOR" in
+AuthenticAMD)
+    # intel_pstate / intel_idle NEVER load on AMD. Checking for them is
+    # meaningless here; the AMD equivalents are amd_pstate and acpi_idle.
+    AMD_STATUS_FILE=/sys/devices/system/cpu/amd_pstate/status
+    if [[ -r "$AMD_STATUS_FILE" ]]; then
+        AMD_MODE=$(cat "$AMD_STATUS_FILE")
+        case "$AMD_MODE" in
+            passive|disable)
+                ok "amd_pstate mode: ${AMD_MODE} (deterministic)"
+                ;;
+            active)
+                warn "amd_pstate mode: active (EPP) — hardware picks frequency autonomously"
+                info "This is the least deterministic mode and is the common default."
+                info "Prefer: amd_pstate=passive with the performance governor."
+                info "Runtime: echo passive | sudo tee ${AMD_STATUS_FILE}"
+                ;;
+            guided)
+                warn "amd_pstate mode: guided — platform chooses within software limits"
+                info "Prefer amd_pstate=passive for hard real-time."
+                ;;
+            *)
+                info "amd_pstate mode: ${AMD_MODE}"
+                ;;
+        esac
+    elif [[ "$SCALING_DRIVER" == "acpi-cpufreq" ]]; then
+        ok "acpi-cpufreq in use (amd_pstate disabled)"
+    fi
+
+    if grep -q "amd_prefcore=disable" <<<"$CMDLINE"; then
+        ok "amd_prefcore=disable set (no preferred-core bias)"
+    else
+        info "Consider amd_prefcore=disable so firmware does not bias toward 'golden' cores"
+    fi
+
+    # Boost causes clock transitions. A flatter clock is worth more than peak.
+    BOOST_FILE=/sys/devices/system/cpu/cpufreq/boost
+    if [[ -r "$BOOST_FILE" ]]; then
+        if [[ "$(cat "$BOOST_FILE")" == "0" ]]; then
+            ok "Core Performance Boost disabled (flatter clock)"
+        else
+            warn "Core Performance Boost enabled — clock transitions add jitter"
+            info "echo 0 | sudo tee ${BOOST_FILE}"
+        fi
+    fi
+
+    if grep -q "intel_pstate\|intel_idle" <<<"$CMDLINE"; then
+        warn "intel_pstate/intel_idle parameters present on an AMD CPU — they do nothing"
+    fi
+    ;;
+GenuineIntel)
+    if grep -q "intel_pstate=disable" <<<"$CMDLINE"; then
+        ok "intel_pstate disabled"
+    else
+        warn "intel_pstate not explicitly disabled"
+    fi
+    if grep -q "intel_idle.max_cstate=0" <<<"$CMDLINE"; then
+        ok "intel_idle deep C-states blocked"
+    else
+        warn "intel_idle.max_cstate=0 not set"
+    fi
+    ;;
+esac
+
+# processor.max_cstate drives acpi_idle and works on BOTH vendors.
+# The kernel clamps 0 to 1, so =1 is the correct value to use.
+if grep -qE "processor\.max_cstate=[01]" <<<"$CMDLINE"; then
+    ok "Deep C-states blocked (processor.max_cstate)"
 else
-    warn "intel_pstate not explicitly disabled"
+    warn "processor.max_cstate=1 not set — verify C-states are disabled in BIOS"
 fi
 
-if grep -qE "processor.max_cstate=[01]" <<<"$CMDLINE"; then
-    ok "Deep C-states blocked via kernel command line"
+if grep -qE "iommu\.passthrough=1|iommu=pt|amd_iommu=off|intel_iommu=off" <<<"$CMDLINE"; then
+    ok "IOMMU DMA translation bypassed or disabled"
 else
-    warn "processor.max_cstate not restricted — verify C-states are off in BIOS"
+    info "Consider iommu.passthrough=1 — lazy IOTLB invalidation can cause DMA stalls"
 fi
 
 # SMT / hyper-threading
