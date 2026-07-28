@@ -139,10 +139,34 @@ if kconfig_have; then
 
     # Latency tracers — needed to diagnose firmware-induced stalls.
     if kconfig_y CONFIG_HWLAT_TRACER; then
-        ok "CONFIG_HWLAT_TRACER=y (hwlatdetect available)"
+        ok "CONFIG_HWLAT_TRACER=y"
     else
         warn "CONFIG_HWLAT_TRACER not set — hwlatdetect will not work"
     fi
+fi
+
+# Compiled-in is not the same as available. The tracer is only usable once
+# tracefs is mounted and the tracer is listed in available_tracers, so check
+# the runtime state rather than trusting the config alone.
+TRACEFS=""
+for d in /sys/kernel/tracing /sys/kernel/debug/tracing; do
+    [[ -r "$d/available_tracers" ]] && { TRACEFS="$d"; break; }
+done
+
+if [[ -z "$TRACEFS" ]]; then
+    warn "tracefs not accessible — hwlatdetect/osnoise/timerlat unavailable"
+    info "As root: mount -t tracefs nodev /sys/kernel/tracing"
+    info "(reading available_tracers usually requires root)"
+else
+    AVAIL=$(cat "$TRACEFS/available_tracers" 2>/dev/null || echo "")
+    for t in hwlat osnoise timerlat; do
+        if grep -qw "$t" <<<"$AVAIL"; then
+            ok "Tracer '${t}' available"
+        else
+            warn "Tracer '${t}' NOT in ${TRACEFS}/available_tracers"
+        fi
+    done
+    [[ -n "$AVAIL" ]] && info "available_tracers: ${AVAIL}"
 fi
 
 # The TSC must remain the clocksource. If the kernel demotes it to HPET or
