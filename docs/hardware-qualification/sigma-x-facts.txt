@@ -1,0 +1,780 @@
+Drive manual fact extraction
+source : siepc71081202h_7_0.pdf
+size   : 41M
+lines  : 49885
+
+================================================================
+== 0x60C2 Interpolation Time Period (RO or RW?)
+================================================================
+--- line 886 ---
+15.10 Interpolated Position Mode . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 681
+         15.10.1 Interpolation Submode Select (60C0h) (Object Shared by Mode 1 and Mode 2) . . . . . . . . . . . . . . . . 681
+         15.10.2 Interpolation Data Record (60C1h) (Object Shared by Mode 1 and Mode 2) . . . . . . . . . . . . . . . . . . . 681
+         15.10.3 Interpolation Time Period (60C2h) (Object Shared by Mode 1 and Mode 2). . . . . . . . . . . . . . . . . . . . 681
+15.11 Cyclic Synchronous Position Mode . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 683
+         15.11.1 Velocity Offset (60B1h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 683
+         15.11.2 Torque Offset (60B2h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 683
+15.12 Profile Velocity/Cyclic Synchronous Velocity Mode. . . . . . . . . . . . . . . . . . . . . . . . 684
+         15.12.1 Velocity Demand Value (606Bh) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 684
+         15.12.2 Velocity Actual Value (606Ch). . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 684
+         15.12.3 Velocity Window (606Dh) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 684
+         15.12.4 Velocity Window Time (606Eh) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 684
+         15.12.5 End Velocity (6082h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 684
+         15.12.6 Target Velocity (60FFh) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 685
+15.13 Profile Torque/Cyclic Synchronous Torque Mode . . . . . . . . . . . . . . . . . . . . . . . . . 686
+         15.13.1 Target Torque (6071h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 686
+         15.13.2 Torque Demand Value (6074h). . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 686
+         15.13.3 Torque Slope (6087h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 686
+         15.13.4 Motor Rated Torque (6076h). . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 686
+         15.13.5 Torque Actual Value (6077h). . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 686
+         15.13.6 Current Actual Value (6078h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 687
+15.14 Torque Limit Function . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 688
+         15.14.1 Max. Torque (6072h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 688
+         15.14.2 Positive Torque Limit Value (60E0h). . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 688
+
+--- line 29428 ---
+   (1) Mode1
+       This submode normally uses a time (communications) synchronization mechanism to synchronize the servo
+       drives.
+       The Interpolation Time Period defines the update cycle of the Interpolation Data (i.e., the interpolation position).
+       The interpolation processing in the SERVOPACK is based on this setting.
+       The Interpolation Data is interpreted as an absolute value.
+       The following figure shows the block diagram for mode 1.
+                                                                                                                                           CiA402 Drive Profile
+   (a) Related Objects                                                                                                                            14
+                                                                                           PDO                              Saving to
+         Index     Subindex                 Name                 Data Type   Access                        Value
+                                                                                          Mapping                           EEPROM
+                                                                                                        0 to 0xFFFF
+         6040h         0      Controlword                           UINT      RW              Yes        (default: 0)          No
+         6041h         0      Statusword                            UINT      RO              Yes            –                 No
+                                                                                                                 Continued on next page.
+
+--- line 29470 ---
+                                                                                                         unit]
+                          0      Number of entries                  USINT       RO        No               2               No
+                                                                                                       1 to 250
+            60C2h         1      Interpolation time period value    USINT       RW        No        (default: 125)         No
+                                                                                                       -6 to -3
+                          2      Interpolation time index            SINT       RW        No         (default: -6)         No
+                          0      Number of entries                  USINT       RO        No               2               No
+                                                                                                  -2147483648 to 0
+                          1      Min position range limit            DINT       RW        Yes      (default: 0) [Pos.      Yes
+            607Bh                                                                                        unit]
+                                                                                                   0 to 2147483647
+                          2      Max position range limit            DINT       RW        Yes      (default: 0) [Pos.      Yes
+                                                                                                         unit]
+                          0      Number of entries                  USINT       RO        No               2               No
+                                                                                                    -1073741823 to
+                                                                                                      1073741823
+                          1      Min position limit                  DINT       RW        No       (default: 0) [Pos.      Yes
+            607Dh                                                                                        unit]
+                                                                                                    -1073741823 to
+                                                                                                      1073741823
+                          2      Max position limit                  DINT       RW        No       (default: 0) [Pos.      Yes
+                                                                                                         unit]
+                                                                                                   0 to 4294967295
+             6084h        0      Profile Deceleration               UDINT       RW        Yes       (default: 1000)        Yes
+                                                                                                      [Acc. unit]
+                                                                                                   0 to 4294967295
+
+
+================================================================
+== Communication cycle times / DC Sync0 support
+================================================================
+--- line 4256 ---
+                          Mailbox                        Emergency messages, SDO requests, SDO responses
+                                                         Free-run mode and DC mode (can be switched.)
+                          Distributed Clocks
+                                                         Applicable DC cycles: 62.5 μs to 4 ms in 62.5-μs increments
+                                                                                                                                                         2
+                          SubDevice Information IF       4 KB
+                                                         During EtherCAT communications: L/A x 2
+                          LED Indicator                  EtherCAT communications status: RUN x 1
+                                                         EtherCAT error status: ERR x 1
+                                                         •   Homing Mode
+                                                         •   Profile Position Mode
+                                                         •   Interpolated Position Mode
+                                                         •   Profile Velocity Mode
+                                                         •   Profile Torque Mode
+CiA402 Drive Profile
+                                                         •   Cyclic Synchronous Position Mode
+                                                         •   Cyclic Synchronous Velocity Mode
+                                                         •   Cyclic Synchronous Torque Mode
+                                                         •   Touch Probe Function
+                                                         •   Torque Limit Function
+                                                         Number of points: 2
+                                                         Output voltage range: ±10 VDC (effective linearity range: ±8 V)
+Analog Monitor (CN5)                                     Resolution: 16 bits
+                                                         Accuracy: ±20 mV (Typ)
+                                                         Maximum output current: ±10 mA
+
+--- line 24668 ---
+                                                                                                                               –
+    Communications Type         tion (1C32h) object in EtherCAT communications.
+    1C32h: 2: EtherCAT
+                            Displays the value of the cycle time (subindex 2) of the Sync Manager 2 Synchronization
+    Communications Synchro-                                                                                                            ns
+                            (1C32h) object in EtherCAT communications.
+    nization Cycle
+    1C32h: 11: EtherCAT      Displays the value of the SM event missed counter (subindex 11) of the Sync Manager 2 Syn-
+                                                                                                                                       –
+    Receive Event Miss Count chronization (1C32h) object in EtherCAT communications.
+(b) [Status] Window
+         Information   If you are connecting the advanced safety module to the SERVOPACK, monitor items for the advanced safety module
+                       will also be displayed. For details, refer to the following manual.
+                           Σ-X-Series AC Servo Drive Advanced Safety Module with Safety over EtherCAT (FSoE) Communications References Product Man-
+                           ual (Manual No.: SIEP C710812 25)
+                           Σ-X-Series AC Servo Drive Advanced Safety Module Digital I/O Product Manual (Manual No.: SIEP C710812 26)
+                                                                  Monitor Items
+    •   Active Gain Monitor                                                •   Position Reference Direction
+    •   Main Circuit                                                       •   AC Power ON
+    •   Encoder (PGRDY)                                                    •   Surge Current Limiting Resistor Short Relay
+    •   Motor Power (Request)                                              •   Regenerative Transistor
+    •   Motor Power ON                                                     •   Regenerative Error Detection
+
+--- line 28893 ---
+13.6 Synchronization with Distributed Clocks
+     The synchronization of EtherCAT communications is based on a mechanism called a distributed clock.
+     With the distributed clock, all devices are synchronized with each other by sharing the same reference clock.
+     The SubDevices synchronize the internal applications to the Sync0 events that are generated according to the
+     reference clock.
+     You can use the following synchronization modes with EtherCAT.
+     You can change the synchronization mode in the Sync Control registers (ESC registers 0x980 and 0x981).
+     • Free-Run (ESC register 0x980 = 0x0000)
+       In free-run mode, the local cycle is independent from the communications cycle and MDevice cycle.
+     • DC Mode (ESC register 0x980 = 0x0300)
+       In this mode, the SERVOPACK is synchronized with the host controller (MDevice) on the Sync0 event.
+     The following figure gives a timing chart for DC synchronization.
+                                                                                                                           EtherCAT Communications
+                                                                                                                                   13
+                                                                                                                     595
+13.6 Synchronization with Distributed Clocks
+
+
+================================================================
+== 0x1C12 / 0x1C13 PDO assignment
+================================================================
+--- line 806 ---
+              15.3.2 Transmit PDO Mapping (1A00h to 1A03h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 642
+     15.4     Sync Manager Communication Objects. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 646
+              15.4.1 Sync Manager Communication Type (1C00h). . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 646
+              15.4.2 Sync Manager PDO Assignment (1C10h-1C13h). . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 646
+              15.4.3 Sync Manager Synchronization (1C32h, 1C33h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 647
+              15.4.4 Sync Error Settings (10F1h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 649
+     15.5     Manufacturer Specific Objects . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 651
+              15.5.1 SERVOPACK Parameters (2000h to 26FFh) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 651
+              15.5.2 User Parameter Configuration (2700h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 651
+              15.5.3 Position User Unit (2701h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 651
+              15.5.4 Velocity User Unit (2702h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 652
+              15.5.5 Acceleration User Unit (2703h). . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 652
+              15.5.6 Torque User Unit (2704h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 652
+              15.5.7 SERVOPACK Adjusting Command (2710h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 653
+              15.5.8 Manufacturer Interpolation Data Configuration for 1st Profile (2730h) (Mode 2 Object) . . . . . . . . . . . 656
+              15.5.9 Manufacturer Interpolation Data Configuration for 2nd Profile (2731h) (Mode 2 Object). . . . . . . . . . . 657
+              15.5.10 Interpolation Profile Select (2732h) (Mode 2 Object) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 658
+              15.5.11 Interpolation Data Read/Write Pointer Position Monitor (2741h) (Mode 2 Object) . . . . . . . . . . . . . . . 659
+                                                                                                                                                                            17
+            15.5.12 Sensing Data Monitor (2770h, 2771h, 2772h). . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 659
+            15.5.13 Σ-LINK II Data Monitor (2773h, 2774h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 662
+            15.5.14 Controlword_VenderS (2776h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 662
+            15.5.15 Output Position Setting (2778h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 663
+            15.5.16 Output Function Setting (2779h). . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 663
+
+--- line 28789 ---
+      In addition to the above PDO mappings, PDOs have to be assigned to the Sync Managers to exchange EtherCAT
+      process data.
+      The Sync Manager PDO assignment objects (1C12h and 1C13h) establish the relationship between these PDOs
+      and the Sync Managers.
+      The following figure shows an example of a Sync Manager and the PDO mappings.
+                                                                                                                                            EtherCAT Communications
+                    The PDO mapping objects (indexes 1600h to 1603h and 1A00h to 1A03h) and the Sync Manager PDO assignment objects
+                    (index 1C12h and 1C13h) can be written only in Pre-Operational state.
+        Important
+                                                                                                                                                    13
+13.5.1 Setting Procedure for PDO Mappings
+           1.       Disable the assignments between the Sync Manager and PDOs.
+                    (Set subindex 0 of objects 1C12h to 1C13h to 0.)
+           2.       Set all of the mapping entries for the PDO mapping objects.
+                    The objects you must configure as shown below.
+                    • 1600h to 1603h, 1A00h to 1A03h
+           3.       Set the number of mapping entries for all PDO mapping objects (= subindex 0 of the
+                    above objects).
+
+--- line 28798 ---
+                                                                                                                                            EtherCAT Communications
+                    The PDO mapping objects (indexes 1600h to 1603h and 1A00h to 1A03h) and the Sync Manager PDO assignment objects
+                    (index 1C12h and 1C13h) can be written only in Pre-Operational state.
+        Important
+                                                                                                                                                    13
+13.5.1 Setting Procedure for PDO Mappings
+           1.       Disable the assignments between the Sync Manager and PDOs.
+                    (Set subindex 0 of objects 1C12h to 1C13h to 0.)
+           2.       Set all of the mapping entries for the PDO mapping objects.
+                    The objects you must configure as shown below.
+                    • 1600h to 1603h, 1A00h to 1A03h
+           3.       Set the number of mapping entries for all PDO mapping objects (= subindex 0 of the
+                    above objects).
+                                                                                                                                      593
+13.5 PDO Mappings
+             4.   Set the assignments between the Sync Manager and PDOs (= subindexes 1 and 2 of
+                  objects 1C12h to 1C13h).
+             5.   Enable the assignments between the Sync Manager and PDOs (= set subindex of
+                  objects 1C12h to 1C13h to 0).
+                  Note:
+
+
+================================================================
+== SDO Complete Access
+================================================================
+--- line 47307 ---
+     0x06 01 00 02              Attempt to write to a read-only object
+     0x06 01 00 03              The entry was not written because the subindex was a value other than 0
+     0x06 01 00 04              The object cannot be accessed through complete access
+     0x06 02 00 00              The object does not exist in the object directory.
+     0x06 04 00 41              The object cannot be mapped to the PDO.
+     0x06 04 00 42              The number and length of the objects to be mapped would exceed the PDO length.
+     0x06 04 00 43              General parameter incompatibility
+     0x06 04 00 47              General internal incompatibility in the device
+     0x06 06 00 00              Access failed due to a hardware error.
+     0x06 07 00 10              Data type does not match: length of service parameter does not match.
+     0x06 07 00 12              Data type does not match: service parameter too long.
+     0x06 07 00 13              Data type does not match: service parameter too short.
+     0x06 09 00 11              Subindex does not exist.
+     0x06 09 00 30              Value range of parameter was exceeded (only for write access).
+     0x06 09 00 31              Value of parameter that was written is too high.
+
+
+================================================================
+== 0x1C32 / 0x1C33 SM sync parameters, sync error counter
+================================================================
+--- line 807 ---
+     15.4     Sync Manager Communication Objects. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 646
+              15.4.1 Sync Manager Communication Type (1C00h). . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 646
+              15.4.2 Sync Manager PDO Assignment (1C10h-1C13h). . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 646
+              15.4.3 Sync Manager Synchronization (1C32h, 1C33h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 647
+              15.4.4 Sync Error Settings (10F1h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 649
+     15.5     Manufacturer Specific Objects . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 651
+              15.5.1 SERVOPACK Parameters (2000h to 26FFh) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 651
+              15.5.2 User Parameter Configuration (2700h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 651
+              15.5.3 Position User Unit (2701h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 651
+              15.5.4 Velocity User Unit (2702h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 652
+              15.5.5 Acceleration User Unit (2703h). . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 652
+              15.5.6 Torque User Unit (2704h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 652
+              15.5.7 SERVOPACK Adjusting Command (2710h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 653
+              15.5.8 Manufacturer Interpolation Data Configuration for 1st Profile (2730h) (Mode 2 Object) . . . . . . . . . . . 656
+              15.5.9 Manufacturer Interpolation Data Configuration for 2nd Profile (2731h) (Mode 2 Object). . . . . . . . . . . 657
+              15.5.10 Interpolation Profile Select (2732h) (Mode 2 Object) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 658
+              15.5.11 Interpolation Data Read/Write Pointer Position Monitor (2741h) (Mode 2 Object) . . . . . . . . . . . . . . . 659
+                                                                                                                                                                            17
+            15.5.12 Sensing Data Monitor (2770h, 2771h, 2772h). . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 659
+            15.5.13 Σ-LINK II Data Monitor (2773h, 2774h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 662
+            15.5.14 Controlword_VenderS (2776h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 662
+            15.5.15 Output Position Setting (2778h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 663
+            15.5.16 Output Function Setting (2779h). . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 663
+            15.5.17 Output Time Setting (277Ah) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 663
+
+--- line 24663 ---
+    60FCh: Reference Posi-      Displays the value of the Position Demand Internal Value (60FCh) object in EtherCAT
+                                                                                                                                       Pos. unit
+    tion Pulse                  communications.
+    1C32h: 1: EtherCAT          Displays the value of the synchronization type (subindex 1) of the Sync Manager 2 Synchroniza-
+                                                                                                                               –
+    Communications Type         tion (1C32h) object in EtherCAT communications.
+    1C32h: 2: EtherCAT
+                            Displays the value of the cycle time (subindex 2) of the Sync Manager 2 Synchronization
+    Communications Synchro-                                                                                                            ns
+                            (1C32h) object in EtherCAT communications.
+    nization Cycle
+    1C32h: 11: EtherCAT      Displays the value of the SM event missed counter (subindex 11) of the Sync Manager 2 Syn-
+                                                                                                                                       –
+    Receive Event Miss Count chronization (1C32h) object in EtherCAT communications.
+(b) [Status] Window
+         Information   If you are connecting the advanced safety module to the SERVOPACK, monitor items for the advanced safety module
+                       will also be displayed. For details, refer to the following manual.
+                           Σ-X-Series AC Servo Drive Advanced Safety Module with Safety over EtherCAT (FSoE) Communications References Product Man-
+                           ual (Manual No.: SIEP C710812 25)
+                           Σ-X-Series AC Servo Drive Advanced Safety Module Digital I/O Product Manual (Manual No.: SIEP C710812 26)
+                                                                  Monitor Items
+
+--- line 24665 ---
+    tion Pulse                  communications.
+    1C32h: 1: EtherCAT          Displays the value of the synchronization type (subindex 1) of the Sync Manager 2 Synchroniza-
+                                                                                                                               –
+    Communications Type         tion (1C32h) object in EtherCAT communications.
+    1C32h: 2: EtherCAT
+                            Displays the value of the cycle time (subindex 2) of the Sync Manager 2 Synchronization
+    Communications Synchro-                                                                                                            ns
+                            (1C32h) object in EtherCAT communications.
+    nization Cycle
+    1C32h: 11: EtherCAT      Displays the value of the SM event missed counter (subindex 11) of the Sync Manager 2 Syn-
+                                                                                                                                       –
+    Receive Event Miss Count chronization (1C32h) object in EtherCAT communications.
+(b) [Status] Window
+         Information   If you are connecting the advanced safety module to the SERVOPACK, monitor items for the advanced safety module
+                       will also be displayed. For details, refer to the following manual.
+                           Σ-X-Series AC Servo Drive Advanced Safety Module with Safety over EtherCAT (FSoE) Communications References Product Man-
+                           ual (Manual No.: SIEP C710812 25)
+                           Σ-X-Series AC Servo Drive Advanced Safety Module Digital I/O Product Manual (Manual No.: SIEP C710812 26)
+                                                                  Monitor Items
+    •   Active Gain Monitor                                                •   Position Reference Direction
+    •   Main Circuit                                                       •   AC Power ON
+
+
+================================================================
+== 0x6060 / 0x6061 Modes of operation (CSP = 8)
+================================================================
+--- line 398 ---
+6.16   Rotational Coordinate System . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 301
+       6.16.1 Outline . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 301
+       6.16.2 Block Diagrams . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 302
+       6.16.3 Supported Modes of Operation When the Rotational Coordinate System Is Enabled . . . . . . . . . . . . 302
+       6.16.4 Setup Procedure . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 302
+                                                                                                                                                                               9
+      6.17     Specifying Output Status When a Host Communications Error Occurs. . . . . . . . 306
+               6.17.1 Function Selections for Specifying Output Status When a Host Communications Error
+                      Occurs . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 306
+               6.17.2 Precautions . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 306
+      6.18     Soft Start Settings . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 308
+      6.19     Reference Filters . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 309
+               6.19.1 Speed Reference Filter . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 309
+               6.19.2 Average Position Reference Movement Filter . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 309
+ 7. Trial Operation and Actual Operation . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 311
+      7.1      Flow of Trial Operation . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 312
+               7.1.1       Flow of Trial Operation for Rotary Servomotors . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 312
+               7.1.2       Flow of Trial Operation for Linear Servomotors . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 313
+
+--- line 750 ---
+              14.1.1 State Machine Control Commands. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 601
+              14.1.2 Bits in Statusword (6041h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 601
+              14.1.3 Related Objects . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 601
+     14.2     Modes of Operation . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 603
+              14.2.1 Related Objects . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 603
+              14.2.2 Dynamic Mode Changes. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 603
+     14.3     Position Control Modes . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 604
+              14.3.1 Profile Position Mode. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 604
+              14.3.2 Interpolated Position Mode . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 607
+              14.3.3 Cyclic Synchronous Position Mode . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 611
+     14.4     Homing . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 613
+              14.4.1 Related Objects . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 613
+              14.4.2 Homing Method (6098h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 613
+     14.5     Velocity Control Modes . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 616
+              14.5.1 Profile Velocity Mode . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 616
+              14.5.2 Cyclic Synchronous Velocity Mode . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 617
+     14.6     Torque Control Modes . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 618
+              14.6.1 Profile Torque Mode . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 618
+16
+              14.6.2 Cyclic Sync Torque Mode . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 619
+
+--- line 846 ---
+            15.6.5 Shutdown Option Code (605Bh). . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 670
+            15.6.6 Disable Operation Option Code (605Ch) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 671
+            15.6.7 Halt Option Code (605Dh). . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 671
+            15.6.8 Fault Reaction Option Code (605Eh) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 671
+            15.6.9 Modes of Operation (6060h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 672
+            15.6.10 Modes of Operation Display (6061h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 672
+            15.6.11 Supported Drive Modes (6502h). . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 672
+     15.7   Profile Position Mode. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 674
+            15.7.1 Target Position (607Ah). . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 674
+            15.7.2 Software Position Limit (607Dh) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 674
+            15.7.3 Max Profile Velocity (607Fh) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 674
+            15.7.4 Profile Velocity (6081h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 675
+            15.7.5 Profile Acceleration (6083h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 675
+            15.7.6 Profile Deceleration (6084h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 675
+            15.7.7 Quick Stop Deceleration (6085h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 675
+     15.8   Homing Mode. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 676
+            15.8.1 Home Offset (607Ch) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 676
+            15.8.2 Homing Method (6098h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 676
+            15.8.3 Homing Speeds (6099h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 677
+            15.8.4 Homing Acceleration (609Ah). . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 677
+     15.9   Position Control Function . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 678
+            15.9.1 Position Demand Value (6062h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 678
+            15.9.2 Position Actual Internal Value (6063h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 678
+            15.9.3 Position Actual Value (6064h). . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 678
+            15.9.4 Position Demand Internal Value (60FCh). . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 678
+            15.9.5 Following Error Window (6065h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 678
+
+
+================================================================
+== Default PDO mappings 0x1600 / 0x1A00
+================================================================
+--- line 801 ---
+              15.2.6 Restore Default Parameters (1011h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 635
+              15.2.7 Identity Object (1018h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 636
+     15.3     PDO Mapping Objects. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 637
+              15.3.1 Receive PDO Mapping (1600h to 1603h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 638
+              15.3.2 Transmit PDO Mapping (1A00h to 1A03h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 642
+     15.4     Sync Manager Communication Objects. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 646
+              15.4.1 Sync Manager Communication Type (1C00h). . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 646
+              15.4.2 Sync Manager PDO Assignment (1C10h-1C13h). . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 646
+              15.4.3 Sync Manager Synchronization (1C32h, 1C33h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 647
+              15.4.4 Sync Error Settings (10F1h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 649
+     15.5     Manufacturer Specific Objects . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 651
+              15.5.1 SERVOPACK Parameters (2000h to 26FFh) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 651
+              15.5.2 User Parameter Configuration (2700h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 651
+              15.5.3 Position User Unit (2701h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 651
+              15.5.4 Velocity User Unit (2702h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 652
+              15.5.5 Acceleration User Unit (2703h). . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 652
+              15.5.6 Torque User Unit (2704h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 652
+              15.5.7 SERVOPACK Adjusting Command (2710h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 653
+              15.5.8 Manufacturer Interpolation Data Configuration for 1st Profile (2730h) (Mode 2 Object) . . . . . . . . . . . 656
+              15.5.9 Manufacturer Interpolation Data Configuration for 2nd Profile (2731h) (Mode 2 Object). . . . . . . . . . . 657
+              15.5.10 Interpolation Profile Select (2732h) (Mode 2 Object) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 658
+              15.5.11 Interpolation Data Read/Write Pointer Position Monitor (2741h) (Mode 2 Object) . . . . . . . . . . . . . . . 659
+                                                                                                                                                                            17
+
+--- line 802 ---
+              15.2.7 Identity Object (1018h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 636
+     15.3     PDO Mapping Objects. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 637
+              15.3.1 Receive PDO Mapping (1600h to 1603h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 638
+              15.3.2 Transmit PDO Mapping (1A00h to 1A03h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 642
+     15.4     Sync Manager Communication Objects. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 646
+              15.4.1 Sync Manager Communication Type (1C00h). . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 646
+              15.4.2 Sync Manager PDO Assignment (1C10h-1C13h). . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 646
+              15.4.3 Sync Manager Synchronization (1C32h, 1C33h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 647
+              15.4.4 Sync Error Settings (10F1h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 649
+     15.5     Manufacturer Specific Objects . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 651
+              15.5.1 SERVOPACK Parameters (2000h to 26FFh) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 651
+              15.5.2 User Parameter Configuration (2700h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 651
+              15.5.3 Position User Unit (2701h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 651
+              15.5.4 Velocity User Unit (2702h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 652
+              15.5.5 Acceleration User Unit (2703h). . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 652
+              15.5.6 Torque User Unit (2704h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 652
+              15.5.7 SERVOPACK Adjusting Command (2710h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 653
+              15.5.8 Manufacturer Interpolation Data Configuration for 1st Profile (2730h) (Mode 2 Object) . . . . . . . . . . . 656
+              15.5.9 Manufacturer Interpolation Data Configuration for 2nd Profile (2731h) (Mode 2 Object). . . . . . . . . . . 657
+              15.5.10 Interpolation Profile Select (2732h) (Mode 2 Object) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 658
+              15.5.11 Interpolation Data Read/Write Pointer Position Monitor (2741h) (Mode 2 Object) . . . . . . . . . . . . . . . 659
+                                                                                                                                                                            17
+            15.5.12 Sensing Data Monitor (2770h, 2771h, 2772h). . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 659
+
+--- line 12595 ---
+                   131088 to 262144                             680 × Pn212 / 262144 [kpps]                 400 ms max.
+                   262176 to 524288                             680 × Pn212 / 524288 [kpps]                 800 ms max.
+                   524352 to 1048576                            680 × Pn212 / 1048576 [kpps]                1600 ms max.
+6.8.5     Transmission Specifications
+          The position data transmission specifications for the PAO (Encoder Divided Pulse Output) signal are given in the
+          following table.
+          The PAO signal sends only the multiturn data.
+          Refer to the following section for the timing of sending the position data from the absolute encoder.
+               6.8.4 Reading the Position Data from the Absolute Encoder on page 267
+                         Item                                                              PAO Signal
+          Synchronization Method            Start-stop synchronization (ASYNC)
+          Transmission Speed                9600 bps
+          Start Bits                        1 bit
+          Stop Bits                         1 bit
+          Parity                            Even
+          Character Code                    ASCII, 7 bits
+
+
+================================================================
+== 0x6065 following error / 0x607D software limits
+================================================================
+--- line 852 ---
+            15.6.11 Supported Drive Modes (6502h). . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 672
+     15.7   Profile Position Mode. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 674
+            15.7.1 Target Position (607Ah). . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 674
+            15.7.2 Software Position Limit (607Dh) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 674
+            15.7.3 Max Profile Velocity (607Fh) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 674
+            15.7.4 Profile Velocity (6081h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 675
+            15.7.5 Profile Acceleration (6083h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 675
+            15.7.6 Profile Deceleration (6084h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 675
+            15.7.7 Quick Stop Deceleration (6085h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 675
+     15.8   Homing Mode. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 676
+            15.8.1 Home Offset (607Ch) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 676
+            15.8.2 Homing Method (6098h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 676
+            15.8.3 Homing Speeds (6099h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 677
+            15.8.4 Homing Acceleration (609Ah). . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 677
+     15.9   Position Control Function . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 678
+            15.9.1 Position Demand Value (6062h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 678
+            15.9.2 Position Actual Internal Value (6063h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 678
+            15.9.3 Position Actual Value (6064h). . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 678
+            15.9.4 Position Demand Internal Value (60FCh). . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 678
+            15.9.5 Following Error Window (6065h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 678
+            15.9.6 Following Error Time Out (6066h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 679
+18
+         15.9.7 Following Error Actual Value (60F4h). . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 679
+         15.9.8 Position Window (6067h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 679
+
+--- line 870 ---
+            15.9.1 Position Demand Value (6062h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 678
+            15.9.2 Position Actual Internal Value (6063h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 678
+            15.9.3 Position Actual Value (6064h). . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 678
+            15.9.4 Position Demand Internal Value (60FCh). . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 678
+            15.9.5 Following Error Window (6065h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 678
+            15.9.6 Following Error Time Out (6066h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 679
+18
+         15.9.7 Following Error Actual Value (60F4h). . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 679
+         15.9.8 Position Window (6067h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 679
+         15.9.9 Position Window Time (6068h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 679
+         15.9.10 Position Offset (60B0h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 679
+         15.9.11 Additional Position Actual Value (60E4h). . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 680
+         15.9.12 Position Range Limit (607Bh) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 680
+         15.9.13 Position Option Code (60F2h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 680
+15.10 Interpolated Position Mode . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 681
+         15.10.1 Interpolation Submode Select (60C0h) (Object Shared by Mode 1 and Mode 2) . . . . . . . . . . . . . . . . 681
+         15.10.2 Interpolation Data Record (60C1h) (Object Shared by Mode 1 and Mode 2) . . . . . . . . . . . . . . . . . . . 681
+         15.10.3 Interpolation Time Period (60C2h) (Object Shared by Mode 1 and Mode 2). . . . . . . . . . . . . . . . . . . . 681
+15.11 Cyclic Synchronous Position Mode . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 683
+         15.11.1 Velocity Offset (60B1h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 683
+         15.11.2 Torque Offset (60B2h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 683
+15.12 Profile Velocity/Cyclic Synchronous Velocity Mode. . . . . . . . . . . . . . . . . . . . . . . . 684
+         15.12.1 Velocity Demand Value (606Bh) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 684
+         15.12.2 Velocity Actual Value (606Ch). . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 684
+
+--- line 12077 ---
+6.6   Software Limits
+      You can set limits in the software for machine movement that do not use the overtravel signals (P-OT and N-
+      OT). If a software limit is exceeded, an emergency stop will be executed in the same way as it is for overtravel.
+      Refer to the following section for details on this function.
+         15.7.2 Software Position Limit (607Dh) on page 674
+                                                                                                                           Application Functions
+                                                                                                                                              6
+                                                                                                                     259
+6.7 Selecting Torque Limits
+6.7        Selecting Torque Limits
+           You can limit the torque that is output by the servomotor.
+           There are four different ways to limit the torque. These are described in the following table.
+                   Limit Method                                 Outline                                Control Method                  Reference
+                                        The torque is always limited with the setting of a                                          6.7.1 Internal Torque
+           Internal Torque Limits
+                                        parameter.                                                                                  Limits on page 260
+
+
+================================================================
+== Scaling: 0x6091 gear, 0x6092 feed constant, 0x608F encoder
+================================================================
+--- line 283 ---
+       5.13.2 Detection Timing for Overload Alarms (A.720) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 212
+5.14   Setting Unit Systems . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 214
+       5.14.1 Position Reference Unit Setting . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 214
+       5.14.2 Electronic Gear Ratio Setting Examples . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 218
+       5.14.3 Setting the Speed Reference Unit . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 219
+       5.14.4 Setting the Acceleration Reference Unit . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 220
+       5.14.5 Setting the Torque Reference Unit . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 220
+5.15   Resetting the Absolute Encoder . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 222
+       5.15.1 Precautions on Resetting . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 222
+       5.15.2 Preparations. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 222
+       5.15.3 Applicable Tools. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 222
+       5.15.4 Operating Procedure . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 223
+5.16   Setting the Origin of the Absolute Encoder . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 225
+                                                                                                                                                                               7
+                 5.16.1 Absolute Encoder Origin Offset . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 225
+                 5.16.2 Setting the Origin of the Absolute Linear Encoder . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 225
+        5.17     Setting the Regenerative Resistor Capacity . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 228
+        5.18     Σ-V/Σ-7 Compatible Function and Settings . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 230
+                 5.18.1 Setting the Encoder Resolution Compatibility Selection . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 230
+
+--- line 305 ---
+        5.17     Setting the Regenerative Resistor Capacity . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 228
+        5.18     Σ-V/Σ-7 Compatible Function and Settings . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 230
+                 5.18.1 Setting the Encoder Resolution Compatibility Selection . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 230
+    6. Application Functions . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 231
+        6.1      Changing Allocations of I/O Signals . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 234
+                 6.1.1      Changing Allocations of I/O Signals . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 234
+                 6.1.2      I/O Signal Allocations . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 236
+                 6.1.3      Input Signal Allocations . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 236
+                 6.1.4      Output Signal Allocations . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 238
+                 6.1.5      ALM (Servo Alarm Output) Signal . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 240
+                 6.1.6      /WARN (Warning Output) Signal . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 241
+                 6.1.7      /TGON (Rotation Detection Output) Signal . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 241
+                 6.1.8      /S-RDY (Servo Ready Output) Signal . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 242
+                 6.1.9      /V-CMP (Speed Coincidence Detection Output) Signal . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 243
+                 6.1.10 /COIN (Positioning Completion Output) Signal . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 244
+                 6.1.11     /NEAR (Near Output) Signal . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 245
+                 6.1.12 Speed Limit during Torque Control . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 246
+        6.2      Operation for Momentary Power Interruptions. . . . . . . . . . . . . . . . . . . . . . . . . . . . 248
+        6.3      SEMI F47 Function . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 249
+                 6.3.1      Execution Sequence . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 249
+                 6.3.2      Related Parameters. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 250
+
+--- line 7309 ---
+             5.13.2      Detection Timing for Overload Alarms (A.720).......................................... 212
+      5.14   Setting Unit Systems...............................................................................................214
+             5.14.1      Position Reference Unit Setting .................................................................. 214
+             5.14.2      Electronic Gear Ratio Setting Examples .................................................... 218
+             5.14.3      Setting the Speed Reference Unit ............................................................... 219
+             5.14.4      Setting the Acceleration Reference Unit .................................................... 220
+             5.14.5      Setting the Torque Reference Unit .............................................................. 220
+      5.15   Resetting the Absolute Encoder ..........................................................................222
+             5.15.1      Precautions on Resetting............................................................................. 222
+             5.15.2      Preparations .................................................................................................. 222
+             5.15.3      Applicable Tools............................................................................................ 222
+             5.15.4      Operating Procedure .................................................................................... 223
+      5.16   Setting the Origin of the Absolute Encoder ......................................................225
+172
+       5.16.1   Absolute Encoder Origin Offset .................................................................. 225
+       5.16.2   Setting the Origin of the Absolute Linear Encoder ................................... 225
+5.17   Setting the Regenerative Resistor Capacity .....................................................228
+5.18   Σ-V/Σ-7 Compatible Function and Settings .......................................................230
+       5.18.1   Setting the Encoder Resolution Compatibility Selection......................... 230
+
+
+================================================================
+== Identity: vendor ID / product code / revision
+================================================================
+--- line 798 ---
+              15.2.3 Manufacturer Device Name (1008h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 634
+              15.2.4 Manufacturer Software Version (100Ah) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 634
+              15.2.5 Store Parameters (1010h). . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 635
+              15.2.6 Restore Default Parameters (1011h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 635
+              15.2.7 Identity Object (1018h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 636
+     15.3     PDO Mapping Objects. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 637
+              15.3.1 Receive PDO Mapping (1600h to 1603h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 638
+              15.3.2 Transmit PDO Mapping (1A00h to 1A03h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 642
+     15.4     Sync Manager Communication Objects. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 646
+              15.4.1 Sync Manager Communication Type (1C00h). . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 646
+              15.4.2 Sync Manager PDO Assignment (1C10h-1C13h). . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 646
+              15.4.3 Sync Manager Synchronization (1C32h, 1C33h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 647
+              15.4.4 Sync Error Settings (10F1h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 649
+     15.5     Manufacturer Specific Objects . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 651
+              15.5.1 SERVOPACK Parameters (2000h to 26FFh) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 651
+              15.5.2 User Parameter Configuration (2700h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 651
+              15.5.3 Position User Unit (2701h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 651
+              15.5.4 Velocity User Unit (2702h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 652
+              15.5.5 Acceleration User Unit (2703h). . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 652
+              15.5.6 Torque User Unit (2704h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 652
+              15.5.7 SERVOPACK Adjusting Command (2710h) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 653
+              15.5.8 Manufacturer Interpolation Data Configuration for 1st Profile (2730h) (Mode 2 Object) . . . . . . . . . . . 656
+              15.5.9 Manufacturer Interpolation Data Configuration for 2nd Profile (2731h) (Mode 2 Object). . . . . . . . . . . 657
+              15.5.10 Interpolation Profile Select (2732h) (Mode 2 Object) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 658
+              15.5.11 Interpolation Data Read/Write Pointer Position Monitor (2741h) (Mode 2 Object) . . . . . . . . . . . . . . . 659
+
+--- line 27788 ---
+                                 Connected Node Change Detection Condition                         Speed   Pos     Trq   When Enabled
+                                     0
+                                            Set SigmaLINK II vendor ID and product ID as conditions.
+                                  Default
+       Pn0DC       n.□□□X            1      Set SigmaLINK II vendor ID, product ID, and serial number as conditions.
+       (20DCh)                                                                                                             After restart
+                                     2      Set SigmaLINK II vendor ID, product ID, and product version as conditions.
+                                            Set SigmaLINK II vendor ID, product ID, product version, and serial number
+                                     3
+                                            as conditions.
+11.8.2 Σ-LINK II I/O Device Error Detection Selection
+       You can select the detection method for Σ-LINK II I/O device errors by setting Pn0DD (SigmaLINK II I/O
+       Device Error Detection Selection).
+                                 SigmaLINK II I/O Device Communications Check Mask                 Speed   Pos     Trq   When Enabled
+                                     0
+       Pn0DD                                Set SigmaLINK II SDevice communications error as an alarm (A.Cd7).
+                   n.□□□X         Default
+       (20DDh)                                                                                                             After restart
+                                     1      Set SigmaLINK II SDevice communications error as a warning (A.932).
+
+--- line 27790 ---
+                                     0
+                                            Set SigmaLINK II vendor ID and product ID as conditions.
+                                  Default
+       Pn0DC       n.□□□X            1      Set SigmaLINK II vendor ID, product ID, and serial number as conditions.
+       (20DCh)                                                                                                             After restart
+                                     2      Set SigmaLINK II vendor ID, product ID, and product version as conditions.
+                                            Set SigmaLINK II vendor ID, product ID, product version, and serial number
+                                     3
+                                            as conditions.
+11.8.2 Σ-LINK II I/O Device Error Detection Selection
+       You can select the detection method for Σ-LINK II I/O device errors by setting Pn0DD (SigmaLINK II I/O
+       Device Error Detection Selection).
+                                 SigmaLINK II I/O Device Communications Check Mask                 Speed   Pos     Trq   When Enabled
+                                     0
+       Pn0DD                                Set SigmaLINK II SDevice communications error as an alarm (A.Cd7).
+                   n.□□□X         Default
+       (20DDh)                                                                                                             After restart
+                                     1      Set SigmaLINK II SDevice communications error as a warning (A.932).
+                                     2      Do not detect the SigmaLINK II SDevice communications error.
+
+
+================================================================
+== LRW / logical read-write restrictions
+================================================================
+--- line 4248 ---
+                                                                                                                                      Selecting a SERVOPACK
+Communications                                           FMMU 2: Mapped to mailbox status.
+                          EtherCAT Commands (Data Link   APRD, APWR, APRW, FPRD, FPWR, FPRW, BRD, BWR, BRW,
+                          Layer)                         LRD, LWR, LRW, ARMW, FRMW
+                          Process Data                   Assignments can be changed with PDO mapping.
+                          Mailbox                        Emergency messages, SDO requests, SDO responses
+                                                         Free-run mode and DC mode (can be switched.)
+                          Distributed Clocks
+                                                         Applicable DC cycles: 62.5 μs to 4 ms in 62.5-μs increments
+                                                                                                                                                         2
+                          SubDevice Information IF       4 KB
+                                                         During EtherCAT communications: L/A x 2
+                          LED Indicator                  EtherCAT communications status: RUN x 1
+                                                         EtherCAT error status: ERR x 1
+                                                         •   Homing Mode
+                                                         •   Profile Position Mode
+                                                         •   Interpolated Position Mode
+                                                         •   Profile Velocity Mode
+                                                         •   Profile Torque Mode
+CiA402 Drive Profile
+                                                         •   Cyclic Synchronous Position Mode
+                                                         •   Cyclic Synchronous Velocity Mode
+                                                         •   Cyclic Synchronous Torque Mode
+
+
+================================================================
+== STO / functional safety rating
+================================================================
+--- line 130 ---
+        2.3     External Dimensions . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 89
+                2.3.1     Front Cover Dimensions and Connector Specifications . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 89
+                2.3.2     SERVOPACK External Dimensions . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 90
+        2.4     Examples of Standard Connections between SERVOPACKs and Peripheral
+                Devices. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 100
+                2.4.1     Rotary Servomotor . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 100
+                2.4.2     Linear Servomotor . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 102
+    3. SERVOPACK Installation . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 105
+4
+    3.1    Installation Precautions . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 106
+    3.2    Mounting Types and Orientation. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 107
+    3.3    Mounting Hole Dimensions . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 108
+           3.3.1    Σ-X-series Mounting Hole Dimensions. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 108
+    3.4    Mounting Interval . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 109
+           3.4.1    Installing One SERVOPACK in a Control Panel . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 109
+           3.4.2    Installing More Than One SERVOPACK in a Control Panel . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 109
+           3.4.3    Mounting Interval for the Regenerative Resistor Unit . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 110
+    3.5    Monitoring the Installation Environment . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .111
+
+--- line 201 ---
+       4.5    I/O Signal Connections . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 157
+              4.5.1    I/O Signal Connector (CN1) Names and Functions. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 157
+              4.5.2    I/O Signal Connector (CN1) Pin Layout . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 159
+              4.5.3    I/O Signal Wiring Examples . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 160
+              4.5.4    I/O Circuits . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 161
+       4.6    Connecting Safety Function Signals . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 164
+              4.6.1    Pin Layout of Safety Function Signals (CN8). . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 164
+              4.6.2    I/O Circuits . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 164
+       4.7    Connecting EtherCAT Communications Cables . . . . . . . . . . . . . . . . . . . . . . . . . . 166
+       4.8    Connecting the SigmaWin+ . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 167
+       4.9    Connecting a Digital Operator. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 168
+       4.10   Using the Analog Monitors . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 169
+    5. Basic Functions That Require Setting before Operation . . . . . . . . . . . . . . . 171
+       5.1    Manipulating SERVOPACK Parameters (Pn□□□) . . . . . . . . . . . . . . . . . . . . . . . . . 174
+              5.1.1    Classifications of SERVOPACK Parameters . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 174
+              5.1.2    Notation for Parameters . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 174
+              5.1.3    Setting Methods for SERVOPACK Parameters. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 176
+              5.1.4    Write Prohibition Setting for SERVOPACK Parameters . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 177
+              5.1.5    Initializing SERVOPACK Parameter Settings . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 180
+       5.2    Power Supply Type Settings for the Main Circuit and Control Circuit. . . . . . . . . . 182
+
+--- line 283 ---
+       5.13.2 Detection Timing for Overload Alarms (A.720) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 212
+5.14   Setting Unit Systems . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 214
+       5.14.1 Position Reference Unit Setting . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 214
+       5.14.2 Electronic Gear Ratio Setting Examples . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 218
+       5.14.3 Setting the Speed Reference Unit . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 219
+       5.14.4 Setting the Acceleration Reference Unit . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 220
+       5.14.5 Setting the Torque Reference Unit . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 220
+5.15   Resetting the Absolute Encoder . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 222
+       5.15.1 Precautions on Resetting . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 222
+       5.15.2 Preparations. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 222
+       5.15.3 Applicable Tools. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 222
+       5.15.4 Operating Procedure . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 223
+5.16   Setting the Origin of the Absolute Encoder . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 225
+                                                                                                                                                                               7
+                 5.16.1 Absolute Encoder Origin Offset . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 225
+                 5.16.2 Setting the Origin of the Absolute Linear Encoder . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 225
+        5.17     Setting the Regenerative Resistor Capacity . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 228
+        5.18     Σ-V/Σ-7 Compatible Function and Settings . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 230
+                 5.18.1 Setting the Encoder Resolution Compatibility Selection . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 230
+
