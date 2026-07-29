@@ -31,3 +31,7 @@ add_test(NAME segment_motion COMMAND test_segment_motion)
 add_executable(test_lookahead test_lookahead.cpp)
 target_link_libraries(test_lookahead PRIVATE frcnc_motion frcnc_flags)
 add_test(NAME lookahead COMMAND test_lookahead)
+
+add_executable(test_fieldbus test_fieldbus.cpp)
+target_link_libraries(test_fieldbus PRIVATE frcnc_fieldbus frcnc_flags)
+add_test(NAME fieldbus COMMAND test_fieldbus)

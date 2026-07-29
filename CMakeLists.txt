@@ -108,6 +108,21 @@ target_include_directories(frcnc_motion PUBLIC
 
 target_link_libraries(frcnc_motion PRIVATE frcnc_flags)
 
+# ---------------------------------------------------------- fieldbus layer ----
+# PDO offset discovery and DC drift compensation. Deliberately SOEM-free so the
+# parts that can be silently wrong are testable without hardware.
+
+add_library(frcnc_fieldbus STATIC
+    src/fieldbus/pdo_map.cpp
+    src/fieldbus/dc_sync.cpp
+)
+
+target_include_directories(frcnc_fieldbus PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+)
+
+target_link_libraries(frcnc_fieldbus PRIVATE frcnc_flags)
+
 # ------------------------------------------------------------------ tools ----
 
 add_executable(rt_probe src/tools/rt_probe.cpp)
