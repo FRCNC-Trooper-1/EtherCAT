@@ -74,13 +74,19 @@ sudo ./scripts/install-deps.sh
 # 3. Apply runtime tuning (does not cover BIOS or kernel cmdline)
 sudo ./scripts/setup-realtime.sh <ethercat-interface> 2
 
-# 4. Build
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
+# 4. Build (add -DFRCNC_WITH_SOEM=ON for the fieldbus tools)
+git submodule update --init --recursive
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DFRCNC_WITH_SOEM=ON
 cmake --build build
 ctest --test-dir build --output-on-failure
 
 # 5. Validate the timing foundation
 sudo ./build/rt_probe --cycle 1000 --cpu 2 --duration 60
+sudo ./scripts/hwlat.sh 600 10
+
+# 6. Scan the EtherCAT segment (works with zero slaves connected)
+sudo ./build/bus_scan <ethercat-interface>
+sudo ./build/bus_scan <ethercat-interface> --pdo
 ```
 
 `rt_probe` runs the same `CycleTimer`, memory locking, and scheduling the real

@@ -96,6 +96,13 @@ target_link_libraries(frcnc_drive PRIVATE frcnc_flags frcnc_rt_flags)
 add_executable(rt_probe src/tools/rt_probe.cpp)
 target_link_libraries(rt_probe PRIVATE frcnc_rt frcnc_flags)
 
+if(FRCNC_WITH_SOEM)
+    add_executable(bus_scan src/tools/bus_scan.cpp)
+    # SOEM's headers are C and trip our stricter C++ warnings; keep frcnc_flags
+    # off this target and rely on the compiler defaults.
+    target_link_libraries(bus_scan PRIVATE soem)
+endif()
+
 # ------------------------------------------------------------------ tests ----
 
 if(FRCNC_BUILD_TESTS)
