@@ -15,3 +15,7 @@ add_test(NAME cia402 COMMAND test_cia402)
 add_executable(test_profile test_profile.cpp)
 target_link_libraries(test_profile PRIVATE frcnc_motion frcnc_flags)
 add_test(NAME profile COMMAND test_profile)
+
+add_executable(test_scurve test_scurve.cpp)
+target_link_libraries(test_scurve PRIVATE frcnc_motion frcnc_flags)
+add_test(NAME scurve COMMAND test_scurve)
