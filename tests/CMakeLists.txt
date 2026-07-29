@@ -23,3 +23,7 @@ add_test(NAME scurve COMMAND test_scurve)
 add_executable(test_path test_path.cpp)
 target_link_libraries(test_path PRIVATE frcnc_motion frcnc_flags)
 add_test(NAME path COMMAND test_path)
+
+add_executable(test_segment_motion test_segment_motion.cpp)
+target_link_libraries(test_segment_motion PRIVATE frcnc_motion frcnc_flags)
+add_test(NAME segment_motion COMMAND test_segment_motion)

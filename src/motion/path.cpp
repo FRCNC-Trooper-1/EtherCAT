@@ -193,6 +193,34 @@ Vec3 PathSegment::tangent_at(double s) const noexcept {
     return (n > kEps) ? t * (1.0 / n) : Vec3{};
 }
 
+Vec3 PathSegment::second_derivative_at(double s) const noexcept {
+    // A straight line has no curvature.
+    if (type == SegmentType::Linear || length_ <= kEps || radius <= kEps) {
+        return Vec3{};
+    }
+
+    int u = 0;
+    int v = 1;
+    int w = 2;
+    plane_axes(plane, u, v, w);
+
+    const double f = clamp(s / length_, 0.0, 1.0);
+    const double theta = theta_start + sweep * f;
+
+    // With theta = theta_start + sweep * (s / length):
+    //     dtheta/ds  = sweep / length
+    //     d2p/ds2    = -r * (dtheta/ds)^2 * (cos theta, sin theta)
+    // The helix term is linear in s, so it contributes nothing here.
+    const double dtheta_ds = sweep / length_;
+    const double k2 = dtheta_ds * dtheta_ds;
+
+    Vec3 d2{};
+    d2[u] = -radius * k2 * std::cos(theta);
+    d2[v] = -radius * k2 * std::sin(theta);
+    d2[w] = 0.0;
+    return d2;
+}
+
 double PathSegment::max_path_velocity(const AxisLimits& limits,
                                       const PathConstraints& constraints) const noexcept {
     if (length_ <= kEps) {

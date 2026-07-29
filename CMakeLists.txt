@@ -98,6 +98,7 @@ add_library(frcnc_motion STATIC
     src/motion/profile.cpp
     src/motion/scurve.cpp
     src/motion/path.cpp
+    src/motion/segment_motion.cpp
 )
 
 target_include_directories(frcnc_motion PUBLIC

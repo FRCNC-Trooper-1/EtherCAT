@@ -108,6 +108,18 @@ struct PathSegment {
     /// Unit tangent at arc-length s. Zero vector for a degenerate segment.
     [[nodiscard]] Vec3 tangent_at(double s) const noexcept;
 
+    /// Second derivative of position with respect to arc length, d²p/ds².
+    ///
+    /// This is the curvature vector: zero on a line, and on an arc it points at
+    /// the centre with magnitude 1/r. It is what supplies the centripetal term
+    /// when converting path acceleration into per-axis acceleration:
+    ///
+    ///     a_axis = (d²p/ds²) * v_path²  +  tangent * a_path
+    ///
+    /// Omitting it makes torque feedforward wrong on every arc — exactly where
+    /// the feedforward matters most.
+    [[nodiscard]] Vec3 second_derivative_at(double s) const noexcept;
+
     /// Highest path speed that keeps every axis inside its own velocity limit,
     /// and — for arcs — inside the centripetal and chord-error constraints.
     ///
