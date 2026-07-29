@@ -19,3 +19,7 @@ add_test(NAME profile COMMAND test_profile)
 add_executable(test_scurve test_scurve.cpp)
 target_link_libraries(test_scurve PRIVATE frcnc_motion frcnc_flags)
 add_test(NAME scurve COMMAND test_scurve)
+
+add_executable(test_path test_path.cpp)
+target_link_libraries(test_path PRIVATE frcnc_motion frcnc_flags)
+add_test(NAME path COMMAND test_path)

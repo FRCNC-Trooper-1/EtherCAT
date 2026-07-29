@@ -97,6 +97,7 @@ target_link_libraries(frcnc_drive PRIVATE frcnc_flags frcnc_rt_flags)
 add_library(frcnc_motion STATIC
     src/motion/profile.cpp
     src/motion/scurve.cpp
+    src/motion/path.cpp
 )
 
 target_include_directories(frcnc_motion PUBLIC
