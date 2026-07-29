@@ -53,6 +53,7 @@ const char* to_string(FaultReason r) noexcept {
         case FaultReason::SoftLimitHigh:  return "SoftLimitHigh";
         case FaultReason::NotOperational: return "NotOperational";
         case FaultReason::ModeMismatch:   return "ModeMismatch";
+        case FaultReason::EnableTimeout:  return "EnableTimeout";
     }
     return "?";
 }
@@ -115,12 +116,20 @@ AxisOutputs AxisController::update(const AxisInputs& in, const AxisCommand& cmd)
     // Order matters: the most fundamental condition wins, so a bus dropout is
     // not reported as a following error caused by the dropout.
 
+    // DriveFault and NotOperational mirror a CONDITION, so they lift when the
+    // condition does. FollowingError and the soft limits record an EVENT and
+    // latch until clear_fault(): the axis has already moved somewhere it should
+    // not have, and jogging back inside the envelope does not undo that.
+    //
+    // Mirroring is not a weaker guarantee. MachineController latches its own
+    // FaultRecord, so a bus dropout still needs acknowledging by an operator —
+    // it just does not leave every axis permanently unusable after the frames
+    // come back, which would make a cold start impossible to recover from.
     if (!in.pdo_valid) {
         fault_ = FaultReason::NotOperational;
     } else if (drive::sw_fault(in.statusword)) {
         fault_ = FaultReason::DriveFault;
-    } else if (fault_ == FaultReason::DriveFault) {
-        // The drive has left the Fault state; the master-side latch may lift.
+    } else if (fault_ == FaultReason::DriveFault || fault_ == FaultReason::NotOperational) {
         fault_ = FaultReason::None;
     }
 
@@ -143,8 +152,17 @@ AxisOutputs AxisController::update(const AxisInputs& in, const AxisCommand& cmd)
     }
 
     // A master-detected fault must not leave the axis energised and following.
+    //
+    // WHICH stop depends on whether the axis can still execute one. While the
+    // drive is in Operation Enabled it can run its own quick-stop ramp (0x605A),
+    // which is a controlled deceleration. Once it is not — or once the PDOs
+    // stopped being valid, so nothing we write is being read — the only honest
+    // request is to walk the axis down. The condition is re-evaluated every
+    // cycle, so a quick stop turns into a disable as soon as it completes.
     if (fault_ != FaultReason::None && fault_ != FaultReason::DriveFault) {
-        sm_.request(drive::Request::Disable);
+        const bool can_ramp = in.pdo_valid && fault_ != FaultReason::NotOperational &&
+                              drive::decode_state(in.statusword) == drive::State::OperationEnabled;
+        sm_.request(can_ramp ? drive::Request::QuickStop : drive::Request::Disable);
     }
 
     // --- drive state machine ------------------------------------------------

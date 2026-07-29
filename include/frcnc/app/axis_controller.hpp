@@ -28,6 +28,7 @@ enum class FaultReason : std::uint8_t {
     SoftLimitHigh,
     NotOperational,   ///< PDO data not valid this cycle
     ModeMismatch,     ///< drive is not in the mode we asked for
+    EnableTimeout,    ///< did not reach Operation Enabled in the allowed time
 };
 
 [[nodiscard]] const char* to_string(FaultReason r) noexcept;

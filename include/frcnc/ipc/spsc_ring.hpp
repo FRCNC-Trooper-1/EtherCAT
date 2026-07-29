@@ -124,6 +124,18 @@ public:
 private:
     static constexpr std::size_t kMask = Capacity - 1;
 
+    // The payload comes FIRST, ahead of the indices, purely to keep GCC's
+    // -Wstringop-overflow analysis honest: with an atomic as the first member it
+    // decides the whole object is eight bytes long and warns about every slot
+    // write past the first. Every index is masked to [0, Capacity), so the
+    // warning is spurious — but silencing it by ordering is better than a
+    // pragma that would also hide a real overflow here later.
+    //
+    // Each index still gets its own cache line, which is the part that matters:
+    // the producer writing tail_ must not invalidate the line the consumer is
+    // reading head_ from.
+    alignas(kCacheLine) T buffer_[Capacity];
+
     // Consumer's index, and the producer's cached copy of it.
     alignas(kCacheLine) std::atomic<std::size_t> head_{0};
     alignas(kCacheLine) std::size_t cached_tail_{0};
@@ -131,8 +143,6 @@ private:
     // Producer's index, and the consumer's cached copy of it.
     alignas(kCacheLine) std::atomic<std::size_t> tail_{0};
     alignas(kCacheLine) std::size_t cached_head_{0};
-
-    alignas(kCacheLine) T buffer_[Capacity];
 };
 
 /// Single-writer / multi-reader latest-value slot, via a sequence lock.

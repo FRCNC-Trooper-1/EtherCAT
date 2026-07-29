@@ -332,8 +332,11 @@ void test_bus_dropout_reported_as_dropout_not_following_error() {
     CHECK(ax.fault() == FaultReason::NotOperational);
 }
 
-void test_master_fault_requests_disable() {
+void test_master_fault_requests_a_stop() {
     // A master-detected fault must not leave the axis energised and following.
+    // While the drive is still in Operation Enabled it can run its own
+    // quick-stop ramp, so that is what we ask for -- a shutdown here would
+    // coast or brake per 0x605B instead of decelerating under control.
     AxisController ax;
     ax.configure(basic_config());
     bring_up(ax, 0);
@@ -341,6 +344,11 @@ void test_master_fault_requests_disable() {
 
     (void)ax.update(inputs(kSwOperationEnabled, 0, 6000), command(0.0));
     CHECK(ax.fault() == FaultReason::FollowingError);
+    CHECK(ax.request() == Request::QuickStop);
+
+    // Once the drive is no longer enabled it cannot ramp, so the request must
+    // fall back to walking the axis down rather than leaving it powered.
+    (void)ax.update(inputs(kSwSwitchOnDisabled, 0, 6000), command(0.0));
     CHECK(ax.request() == Request::Disable);
 }
 
@@ -422,7 +430,7 @@ int main() {
     test_command_is_clamped_into_the_envelope();
     test_invalid_pdo_faults_and_disables();
     test_bus_dropout_reported_as_dropout_not_following_error();
-    test_master_fault_requests_disable();
+    test_master_fault_requests_a_stop();
     test_master_fault_can_be_cleared_and_axis_re_enabled();
 
     test_disable_request_never_enables();

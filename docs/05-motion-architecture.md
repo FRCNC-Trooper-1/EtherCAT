@@ -248,8 +248,42 @@ When any axis faults, **every axis must decelerate together along the programmed
 path.** An uncoordinated stop — each axis stopping at its own rate — drives the
 tool off the path and can break the tool or gouge the part.
 
-Implement it as: freeze the trajectory parameter, then ramp it to zero at the
-most restrictive deceleration across all axes.
+Implemented in `MachineController` (`src/app/machine_controller.cpp`). There are
+**two** stops, and picking the wrong one is the mistake to avoid:
+
+| | Master-side ramp | Drive-side quick stop |
+|---|---|---|
+| Used for | operator stop, feed hold, planner starvation | any fault |
+| Who decelerates | the master, by scaling the setpoint stream | each drive, on its own 0x605A ramp |
+| Path preserved | yes — exactly | no — each axis rams down independently |
+| Requires | every axis still following commands | nothing |
+
+The master-side ramp retains the last commanded position and velocity vector and
+scales **every axis by the same factor**, so the tool decelerates along its last
+direction of travel. Trapezoidal integration of the linear ramp makes the
+distance exactly `v² / (2a)` — the same number look-ahead uses when it decides
+how far to plan ahead.
+
+A fault cannot use it. A coordinated ramp needs every axis to still be executing
+commands, and a fault means at least one is not — that is what a fault *is*. So
+faults request quick stop on **all** axes at once: it is executed by each drive
+locally, so it still works for the axis that stopped listening. Path fidelity is
+lost, which is the correct trade when the alternative is no stop at all.
+
+Two consequences worth knowing before they surprise someone on a machine:
+
+- **A stop flushes the setpoint queue.** Everything queued describes the path we
+  just decelerated away from; replaying it would jump the axis forward by the
+  whole stopping distance at full feed. The planner re-plans from the position
+  in `MachineStatus`, after it has seen `motion_active` go false.
+- **A fault reaches the healthy axes one cycle after the faulted one.** The fault
+  is detected from data that arrived in the cycle whose outgoing frame is
+  already being composed. That is 1 ms at 1 kHz and 250 µs at the design rate,
+  and during it the healthy axes are still following an on-path setpoint.
+
+Both behaviours are pinned down in `tests/test_machine_controller.cpp` against a
+simulated drive, which is the only place they can be tested without putting a
+tool into a part to find out.
 
 ### Fail-safe on exit
 
@@ -320,13 +354,26 @@ src/
 ├── motion/        trajectory generation, interpolation, look-ahead, kinematics
 ├── ipc/           lock-free SPSC rings, status reporting
 ├── config/        configuration parsing and validation (non-RT)
-├── app/           process entry, lifecycle, signal handling
-└── tools/         diagnostics: rt_probe, bus scanner, drive explorer
+├── app/           axis control, machine coordination, the cyclic task
+└── tools/         diagnostics: rt_probe, bus_scan, axis_jog
 ```
 
 The dependency direction is one-way: `app` → everything; `motion` and `drive`
 depend on `rt` and `ipc`; **`rt` depends on nothing**. Keeping `rt` dependency-free
 is what makes it auditable.
+
+The `app` layer splits along the line of what can be tested without hardware:
+
+| | Needs SOEM | Tested by |
+|---|---|---|
+| `AxisController` | no | `test_axis_controller` |
+| `MachineController` | no | `test_machine_controller`, against a simulated drive |
+| `CyclicTask` | yes | hardware — `axis_jog` |
+
+Everything that decides what the machine *does* lives on the SOEM-free side.
+`CyclicTask` is only thread setup, the bring-up sequence, and moving bytes
+between the process image and typed structures. That split is what makes the
+coordinated stop testable at all.
 
 ---
 

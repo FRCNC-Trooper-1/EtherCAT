@@ -150,11 +150,13 @@ if(FRCNC_WITH_SOEM)
 endif()
 
 # --------------------------------------------------------------- app layer ----
-# Per-axis control: user units in, drive counts out. Pure logic, so the safety
-# rules are testable without a drive on the bench.
+# Per-axis control and multi-axis coordination: user units in, drive counts out.
+# Pure logic, so the safety rules -- above all the coordinated stop -- are
+# testable without a drive on the bench.
 
 add_library(frcnc_app STATIC
     src/app/axis_controller.cpp
+    src/app/machine_controller.cpp
 )
 
 target_include_directories(frcnc_app PUBLIC
@@ -162,6 +164,21 @@ target_include_directories(frcnc_app PUBLIC
 )
 
 target_link_libraries(frcnc_app PUBLIC frcnc_drive frcnc_ipc PRIVATE frcnc_flags)
+
+# The real-time thread that owns the bus and the machine. Separate target for
+# the same reason as frcnc_bus: everything above stays buildable and testable
+# without the SOEM submodule, and the coordinated stop is tested there.
+if(FRCNC_WITH_SOEM)
+    add_library(frcnc_task STATIC
+        src/app/cyclic_task.cpp
+    )
+    target_include_directories(frcnc_task PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    )
+    # SOEM's headers are C and trip our stricter C++ warnings, so frcnc_flags is
+    # deliberately not applied here.
+    target_link_libraries(frcnc_task PUBLIC frcnc_app frcnc_bus frcnc_rt)
+endif()
 
 # ------------------------------------------------------------------ tools ----
 
@@ -173,6 +190,9 @@ if(FRCNC_WITH_SOEM)
     # SOEM's headers are C and trip our stricter C++ warnings; keep frcnc_flags
     # off this target and rely on the compiler defaults.
     target_link_libraries(bus_scan PRIVATE frcnc_bus)
+
+    add_executable(axis_jog src/tools/axis_jog.cpp)
+    target_link_libraries(axis_jog PRIVATE frcnc_task frcnc_motion)
 endif()
 
 # ------------------------------------------------------------------ tests ----

@@ -147,6 +147,29 @@ from the machine.** Bolt it to the bench, no load, nothing attached to the shaft
    step change in `0x607A` at enable will slam the motor.
 7. Verify `0x6064` (actual position) tracks the command.
 
+The tool for this is `axis_jog`. It brings the bus up, enables the axes, and
+moves one of them a measured distance under a jerk-limited profile, then reports
+what actually happened:
+
+```
+sudo ./build/axis_jog enp3s0 --counts-per-mm 10000 --distance 1 --feed 60
+```
+
+It defaults to 1 mm at 60 mm/min and asks for confirmation before moving. Do the
+first run with the motor **off the machine** — a wrong `--counts-per-mm` is a
+factor-of-anything error in how far the axis travels, and the first place that
+shows up is at the end of the travel.
+
+Read three numbers from its output:
+
+- **measured vs commanded distance** — disagreement means scaling is wrong, and
+  the ratio tells you by how much.
+- **starve events** — non-zero means this PC could not feed setpoints at the
+  requested cycle time. The axis stopped on the path, which is the designed
+  response, but the cycle time is not usable.
+- **max jitter** — should match what `rt_probe` measured. If it is worse, the
+  bus traffic is costing more than the loop budget allows.
+
 ### Exit criteria
 
 - [ ] Drive reaches `Operation Enabled` reliably and returns to a safe state on exit
