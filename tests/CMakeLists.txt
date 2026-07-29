@@ -27,3 +27,7 @@ add_test(NAME path COMMAND test_path)
 add_executable(test_segment_motion test_segment_motion.cpp)
 target_link_libraries(test_segment_motion PRIVATE frcnc_motion frcnc_flags)
 add_test(NAME segment_motion COMMAND test_segment_motion)
+
+add_executable(test_lookahead test_lookahead.cpp)
+target_link_libraries(test_lookahead PRIVATE frcnc_motion frcnc_flags)
+add_test(NAME lookahead COMMAND test_lookahead)

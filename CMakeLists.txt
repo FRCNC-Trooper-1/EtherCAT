@@ -99,6 +99,7 @@ add_library(frcnc_motion STATIC
     src/motion/scurve.cpp
     src/motion/path.cpp
     src/motion/segment_motion.cpp
+    src/motion/lookahead.cpp
 )
 
 target_include_directories(frcnc_motion PUBLIC
