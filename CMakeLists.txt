@@ -123,6 +123,20 @@ target_include_directories(frcnc_fieldbus PUBLIC
 
 target_link_libraries(frcnc_fieldbus PRIVATE frcnc_flags)
 
+# The SOEM-backed bus wrapper. Separate target so the SOEM-free parts above
+# stay buildable and testable without the submodule.
+if(FRCNC_WITH_SOEM)
+    add_library(frcnc_bus STATIC
+        src/fieldbus/bus.cpp
+    )
+    target_include_directories(frcnc_bus PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    )
+    # SOEM's headers are C and trip our stricter C++ warnings, so frcnc_flags
+    # is deliberately not applied here.
+    target_link_libraries(frcnc_bus PUBLIC frcnc_fieldbus soem)
+endif()
+
 # ------------------------------------------------------------------ tools ----
 
 add_executable(rt_probe src/tools/rt_probe.cpp)
@@ -132,7 +146,7 @@ if(FRCNC_WITH_SOEM)
     add_executable(bus_scan src/tools/bus_scan.cpp)
     # SOEM's headers are C and trip our stricter C++ warnings; keep frcnc_flags
     # off this target and rely on the compiler defaults.
-    target_link_libraries(bus_scan PRIVATE soem)
+    target_link_libraries(bus_scan PRIVATE frcnc_bus)
 endif()
 
 # ------------------------------------------------------------------ tests ----
