@@ -149,6 +149,20 @@ if(FRCNC_WITH_SOEM)
     target_link_libraries(frcnc_bus PUBLIC frcnc_fieldbus soem)
 endif()
 
+# --------------------------------------------------------------- app layer ----
+# Per-axis control: user units in, drive counts out. Pure logic, so the safety
+# rules are testable without a drive on the bench.
+
+add_library(frcnc_app STATIC
+    src/app/axis_controller.cpp
+)
+
+target_include_directories(frcnc_app PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+)
+
+target_link_libraries(frcnc_app PUBLIC frcnc_drive frcnc_ipc PRIVATE frcnc_flags)
+
 # ------------------------------------------------------------------ tools ----
 
 add_executable(rt_probe src/tools/rt_probe.cpp)

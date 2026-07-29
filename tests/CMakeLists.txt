@@ -39,3 +39,7 @@ add_test(NAME fieldbus COMMAND test_fieldbus)
 add_executable(test_ipc test_ipc.cpp)
 target_link_libraries(test_ipc PRIVATE frcnc_ipc frcnc_flags)
 add_test(NAME ipc COMMAND test_ipc)
+
+add_executable(test_axis_controller test_axis_controller.cpp)
+target_link_libraries(test_axis_controller PRIVATE frcnc_app frcnc_flags)
+add_test(NAME axis_controller COMMAND test_axis_controller)
