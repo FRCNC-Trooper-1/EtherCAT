@@ -35,3 +35,7 @@ add_test(NAME lookahead COMMAND test_lookahead)
 add_executable(test_fieldbus test_fieldbus.cpp)
 target_link_libraries(test_fieldbus PRIVATE frcnc_fieldbus frcnc_flags)
 add_test(NAME fieldbus COMMAND test_fieldbus)
+
+add_executable(test_ipc test_ipc.cpp)
+target_link_libraries(test_ipc PRIVATE frcnc_ipc frcnc_flags)
+add_test(NAME ipc COMMAND test_ipc)

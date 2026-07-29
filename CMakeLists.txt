@@ -108,6 +108,18 @@ target_include_directories(frcnc_motion PUBLIC
 
 target_link_libraries(frcnc_motion PRIVATE frcnc_flags)
 
+# --------------------------------------------------------------- ipc layer ----
+# Header-only: the lock-free primitives are templates. The library target
+# exists so consumers get the include path and Threads.
+
+add_library(frcnc_ipc INTERFACE)
+
+target_include_directories(frcnc_ipc INTERFACE
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+)
+
+target_link_libraries(frcnc_ipc INTERFACE Threads::Threads)
+
 # ---------------------------------------------------------- fieldbus layer ----
 # PDO offset discovery and DC drift compensation. Deliberately SOEM-free so the
 # parts that can be silently wrong are testable without hardware.
