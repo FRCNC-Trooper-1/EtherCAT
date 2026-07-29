@@ -84,11 +84,17 @@ struct JunctionPolicy {
 /// Fixed capacity, no allocation. Planning runs in the non-real-time domain;
 /// the cyclic task consumes the planned SegmentMotion objects.
 ///
-/// Large — roughly 150 kB at default capacity. Allocate statically or on the
+/// Large — roughly 1.5 MB at default capacity. Allocate statically or on the
 /// heap, never on the stack.
+///
+/// Capacity is sized from the stopping distance: the planner must see far
+/// enough ahead to decelerate from full speed, or it slows down defensively.
+/// At 200 mm/s with a = 3000 and j = 30000 that distance is 16.3 mm, which is
+/// 1,633 blocks of 0.01 mm — the chord length fine CAM output uses for mould
+/// and die work. 2048 covers that with margin at ~721 B per block.
 class LookAhead {
 public:
-    static constexpr int kCapacity = 256;
+    static constexpr int kCapacity = 2048;
 
     void configure(const AxisLimits& axes, const PathConstraints& constraints,
                    const JunctionPolicy& policy) noexcept;
@@ -127,6 +133,14 @@ public:
     /// How many pushed segments were absorbed into a predecessor by merging.
     [[nodiscard]] int merged_count() const noexcept { return merged_; }
 
+    /// Blocks the backward pass visited on the last plan().
+    ///
+    /// Currently always size(): a full replan must compute every entry
+    /// velocity, since each depends on its own exit velocity and length. This
+    /// becomes meaningful once incremental replanning lands, where only the
+    /// appended tail needs revisiting.
+    [[nodiscard]] int backward_visited() const noexcept { return backward_visited_; }
+
     /// Sample the queue at absolute time t, walking segment boundaries.
     [[nodiscard]] AxisCommand at(double t) const noexcept;
 
@@ -142,8 +156,15 @@ private:
     double exit_[kCapacity]{};
     double vmax_[kCapacity]{};
 
+    // Cached at push time. max_path_acceleration() and max_path_jerk() sample
+    // 32 tangent directions for an arc, and both passes need them every plan,
+    // so recomputing was the dominant cost.
+    double accel_[kCapacity]{};
+    double jerk_[kCapacity]{};
+
     int count_ = 0;
     int merged_ = 0;
+    int backward_visited_ = 0;
     bool planned_ = false;
 };
 

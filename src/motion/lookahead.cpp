@@ -35,7 +35,10 @@ double max_reachable_velocity_jerk(double v_start, double distance, double max_a
     // start velocity and the constant-acceleration overestimate.
     double lo = v_start;
     double hi = v_const_accel;
-    for (int i = 0; i < 60; i++) {
+    // Stop once the bracket is tighter than any meaningful machine resolution.
+    // A fixed iteration count wastes roughly half the work: doubles converge
+    // long before 60 halvings of this range.
+    for (int i = 0; i < 60 && (hi - lo) > 1e-9 * (1.0 + hi); i++) {
         const double mid = 0.5 * (lo + hi);
         if (ramp_distance(v_start, mid, max_accel, max_jerk) > distance) {
             hi = mid;
@@ -114,6 +117,7 @@ void LookAhead::configure(const AxisLimits& axes, const PathConstraints& constra
 void LookAhead::clear() noexcept {
     count_ = 0;
     merged_ = 0;
+    backward_visited_ = 0;
     planned_ = false;
 }
 
@@ -143,6 +147,8 @@ bool LookAhead::push(const PathSegment& seg, double requested_feed) noexcept {
                 v = requested_feed;
             }
             vmax_[count_ - 1] = v;
+            accel_[count_ - 1] = merged.max_path_acceleration(axes_);
+            jerk_[count_ - 1] = merged.max_path_jerk(axes_);
 
             merged_++;
             planned_ = false;
@@ -163,6 +169,8 @@ bool LookAhead::push(const PathSegment& seg, double requested_feed) noexcept {
         v = requested_feed;
     }
     vmax_[count_] = v;
+    accel_[count_] = seg.max_path_acceleration(axes_);
+    jerk_[count_] = seg.max_path_jerk(axes_);
 
     entry_[count_] = 0.0;
     exit_[count_] = 0.0;
@@ -184,8 +192,7 @@ bool LookAhead::plan(double start_velocity, double terminal_velocity) noexcept {
     // exit_[i] starts as the corner limit between segment i and i+1; the last
     // segment exits at the caller's terminal velocity.
     for (int i = 0; i < n - 1; i++) {
-        const double a_lim = segment_[i].max_path_acceleration(axes_);
-        double vj = junction_velocity(segment_[i], segment_[i + 1], a_lim, policy_);
+        double vj = junction_velocity(segment_[i], segment_[i + 1], accel_[i], policy_);
         vj = min2(vj, vmax_[i]);
         vj = min2(vj, vmax_[i + 1]);
         exit_[i] = vj;
@@ -196,12 +203,11 @@ bool LookAhead::plan(double start_velocity, double terminal_velocity) noexcept {
     // Highest velocity each segment may be entered with while still able to
     // decelerate to its required exit. Walking backwards propagates a stop at
     // the end of the program into however many segments it takes to slow down.
+    backward_visited_ = n;
     for (int i = n - 1; i >= 0; i--) {
-        const double a_lim = segment_[i].max_path_acceleration(axes_);
-        const double j_lim = segment_[i].max_path_jerk(axes_);
 
         const double reachable =
-            max_reachable_velocity_jerk(exit_[i], segment_[i].length(), a_lim, j_lim);
+            max_reachable_velocity_jerk(exit_[i], segment_[i].length(), accel_[i], jerk_[i]);
 
         entry_[i] = min2(vmax_[i], reachable);
 
@@ -211,6 +217,16 @@ bool LookAhead::plan(double start_velocity, double terminal_velocity) noexcept {
         }
     }
 
+    // NOTE: it is tempting to stop this pass once entry_[i] reaches vmax_[i],
+    // on the grounds that the deceleration requirement has stopped propagating.
+    // That is wrong for a full replan. Propagation stopping does not mean the
+    // remaining entry velocities are already correct: each still has to be
+    // computed from its own exit velocity and length, and a short segment with
+    // a low junction exit is entry-limited regardless of what follows it.
+    // Skipping them leaves entry_[] stale and the forward pass then clamps to
+    // zero. The early exit is only valid when replanning INCREMENTALLY after
+    // appending to an already-planned queue, which is a separate design.
+
     // --- forward pass --------------------------------------------------------
     // Clamp entry velocities to what is actually reachable from where the
     // previous segment left off, then propagate forward.
@@ -218,13 +234,10 @@ bool LookAhead::plan(double start_velocity, double terminal_velocity) noexcept {
 
     bool ok = true;
     for (int i = 0; i < n; i++) {
-        const double a_lim = segment_[i].max_path_acceleration(axes_);
-        const double j_lim = segment_[i].max_path_jerk(axes_);
-
         entry_[i] = min2(entry_[i], v_in);
 
         const double reachable =
-            max_reachable_velocity_jerk(entry_[i], segment_[i].length(), a_lim, j_lim);
+            max_reachable_velocity_jerk(entry_[i], segment_[i].length(), accel_[i], jerk_[i]);
         exit_[i] = min2(exit_[i], reachable);
 
         const PlanResult r = motion_[i].plan(segment_[i], entry_[i], exit_[i], axes_,
