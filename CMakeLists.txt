@@ -91,6 +91,19 @@ target_include_directories(frcnc_drive PUBLIC
 
 target_link_libraries(frcnc_drive PRIVATE frcnc_flags frcnc_rt_flags)
 
+# ------------------------------------------------------------ motion layer ----
+# Trajectory generation. Pure math -- no fieldbus, no I/O.
+
+add_library(frcnc_motion STATIC
+    src/motion/profile.cpp
+)
+
+target_include_directories(frcnc_motion PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+)
+
+target_link_libraries(frcnc_motion PRIVATE frcnc_flags)
+
 # ------------------------------------------------------------------ tools ----
 
 add_executable(rt_probe src/tools/rt_probe.cpp)
