@@ -246,6 +246,15 @@ int main(int argc, char** argv) {
 
     std::printf("%d slaves found, rx timeout %d us.\n", task->bus().slave_count(),
                 task->bus().rx_timeout_us());
+
+    // Zero the slaves' own error counters so what we read at the end describes
+    // THIS run, not everything since the drives were last powered up.
+    {
+        auto& mutable_bus = const_cast<fieldbus::Bus&>(task->bus());
+        for (int i = 1; i <= mutable_bus.slave_count(); i++) {
+            (void)mutable_bus.clear_port_errors(i);
+        }
+    }
     std::printf("Waiting for DC lock and OPERATIONAL...\n\n");
 
     // --- run ----------------------------------------------------------------
@@ -353,6 +362,55 @@ int main(int argc, char** argv) {
     std::printf("\n");
     for (int i = 0; i < o.axes; i++) {
         print_axis_line(s, i, o.slave[i]);
+    }
+
+    // --- what the SLAVES saw ------------------------------------------------
+    //
+    // The master only knows a frame did not come back. The slaves know whether
+    // they saw it and found it corrupt. That is the difference between a bad
+    // cable and a bad NIC, and nothing else in this tool can tell them apart.
+    std::printf("\n--- slave-side error counters (this run) ---\n");
+    bool all_clean = true;
+    bool read_any = false;
+    {
+        auto& mutable_bus = const_cast<fieldbus::Bus&>(task->bus());
+        for (int i = 1; i <= mutable_bus.slave_count(); i++) {
+            fieldbus::PortErrors pe;
+            if (!mutable_bus.read_port_errors(i, pe)) {
+                std::printf("  slave %d: could not read error registers\n", i);
+                continue;
+            }
+            read_any = true;
+            if (pe.clean()) {
+                std::printf("  slave %d: clean\n", i);
+                continue;
+            }
+            all_clean = false;
+            std::printf("  slave %d: invalid=%u/%u/%u/%u  rxerr=%u/%u/%u/%u  "
+                        "fwd=%u/%u/%u/%u  lostlink=%u/%u/%u/%u  pu=%u pdi=%u\n",
+                        i, pe.invalid_frame[0], pe.invalid_frame[1], pe.invalid_frame[2],
+                        pe.invalid_frame[3], pe.rx_error[0], pe.rx_error[1], pe.rx_error[2],
+                        pe.rx_error[3], pe.forwarded_rx_error[0], pe.forwarded_rx_error[1],
+                        pe.forwarded_rx_error[2], pe.forwarded_rx_error[3], pe.lost_link[0],
+                        pe.lost_link[1], pe.lost_link[2], pe.lost_link[3],
+                        pe.processing_unit_error, pe.pdi_error);
+        }
+    }
+    if (read_any && s.wkc_errors > 0) {
+        if (all_clean) {
+            std::printf(
+                "\n  Every slave saw a clean wire, yet the master lost %" PRIu64 " frames.\n"
+                "  Nothing went wrong ON the segment: the frames never got back to\n"
+                "  the host. That is the NIC or its driver dropping on receive, not\n"
+                "  cabling. Swap to an Intel i210/i211 before tuning anything else.\n",
+                s.wkc_errors);
+        } else {
+            std::printf(
+                "\n  A slave counted errors on the wire. The port with a non-zero\n"
+                "  count is the one RECEIVING the bad frames, so the fault is in the\n"
+                "  segment feeding it -- cable, connector, or noise. Port 0 is the\n"
+                "  IN port; a count there on slave 1 means the run from the NIC.\n");
+        }
     }
 
     // --- verdict ------------------------------------------------------------

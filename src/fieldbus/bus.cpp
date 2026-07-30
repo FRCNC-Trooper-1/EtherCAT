@@ -411,6 +411,56 @@ int Bus::read_lowest_state() noexcept {
     return ecx_readstate(&ctx_);
 }
 
+bool PortErrors::clean() const noexcept {
+    return total() == 0;
+}
+
+unsigned PortErrors::total() const noexcept {
+    unsigned n = processing_unit_error + pdi_error;
+    for (int i = 0; i < 4; i++) {
+        n += invalid_frame[i];
+        n += rx_error[i];
+        n += forwarded_rx_error[i];
+        n += lost_link[i];
+    }
+    return n;
+}
+
+bool Bus::read_port_errors(int slave, PortErrors& out) noexcept {
+    if (state_ == BusState::Closed || slave < 1 || slave > slave_count_) {
+        return false;
+    }
+
+    // 0x0300..0x0313 in one datagram: per-port RX error counters, forwarded RX
+    // error counters, the processing-unit and PDI counters, then per-port lost
+    // link counters. Layout is ETG.1000.4 and is the same on every ESC.
+    std::uint8_t buf[0x14] = {};
+    const std::uint16_t adr = ctx_.slavelist[slave].configadr;
+    if (ecx_FPRD(&ctx_.port, adr, 0x0300, sizeof(buf), buf, EC_TIMEOUTRET) <= 0) {
+        return false;
+    }
+
+    out = PortErrors{};
+    for (int p = 0; p < 4; p++) {
+        out.invalid_frame[p] = buf[(p * 2) + 0];
+        out.rx_error[p] = buf[(p * 2) + 1];
+        out.forwarded_rx_error[p] = buf[0x08 + p];
+        out.lost_link[p] = buf[0x10 + p];
+    }
+    out.processing_unit_error = buf[0x0C];
+    out.pdi_error = buf[0x0D];
+    return true;
+}
+
+bool Bus::clear_port_errors(int slave) noexcept {
+    if (state_ == BusState::Closed || slave < 1 || slave > slave_count_) {
+        return false;
+    }
+    std::uint8_t zero[0x14] = {};
+    const std::uint16_t adr = ctx_.slavelist[slave].configadr;
+    return ecx_FPWR(&ctx_.port, adr, 0x0300, sizeof(zero), zero, EC_TIMEOUTRET) > 0;
+}
+
 bool Bus::read_sdo(int slave, std::uint16_t index, std::uint8_t subindex, void* data,
                    int& size) noexcept {
     if (state_ == BusState::Closed || slave < 1 || slave > slave_count_ || data == nullptr) {

@@ -168,6 +168,32 @@ struct ExchangeStatus {
     [[nodiscard]] bool healthy() const noexcept { return wkc_ok; }
 };
 
+/// A slave's own count of what went wrong on the wire, from the ESC error
+/// registers at 0x0300..0x0313 (ETG.1000.4).
+///
+/// This is the diagnostic that localises frame loss. The master only knows a
+/// frame did not come back; the slaves know whether they SAW it and found it
+/// corrupt. If a slave reports RX errors or invalid frames, the physical layer
+/// on the segment feeding that port is at fault -- cable, connector, or noise.
+/// If every slave reports zero and the master is still losing frames, nothing
+/// on the wire went wrong and the NIC or its driver dropped them on receive.
+///
+/// Counters saturate at 255 and are cleared by writing to them.
+struct PortErrors {
+    std::uint8_t invalid_frame[4] = {};       ///< 0x0300 + 2n, low byte
+    std::uint8_t rx_error[4] = {};            ///< 0x0300 + 2n, high byte
+    std::uint8_t forwarded_rx_error[4] = {};  ///< 0x0308 + n
+    std::uint8_t lost_link[4] = {};           ///< 0x0310 + n
+    std::uint8_t processing_unit_error = 0;   ///< 0x030C
+    std::uint8_t pdi_error = 0;               ///< 0x030D
+
+    /// True when this slave saw nothing wrong at all.
+    [[nodiscard]] bool clean() const noexcept;
+
+    /// Total across every port, for a one-line verdict.
+    [[nodiscard]] unsigned total() const noexcept;
+};
+
 /// Owns the bus. Large (SOEM's context embeds all slave storage) — allocate
 /// statically or on the heap, never on the stack.
 class Bus {
@@ -233,6 +259,13 @@ public:
     /// Re-read every slave's actual EtherCAT state. Not real-time: this issues
     /// datagrams outside the cyclic exchange.
     [[nodiscard]] int read_lowest_state() noexcept;
+
+    /// Read a slave's ESC error counters. NOT real-time — an extra datagram.
+    [[nodiscard]] bool read_port_errors(int slave, PortErrors& out) noexcept;
+
+    /// Zero a slave's ESC error counters, so a later read measures one run
+    /// rather than everything since the drive was powered on.
+    bool clear_port_errors(int slave) noexcept;
 
     /// Read an object over SDO.
     ///
