@@ -198,20 +198,9 @@ BusResult Bus::configure() noexcept {
         }
     }
 
-    // WAIT for PRE-OP before touching a mailbox.
-    //
-    // ecx_config_init REQUESTS PRE-OP but does not wait for it: SOEM's own
-    // statecheck for PRE-OP lives in ecx_map_coe_soe, which does not run until
-    // ecx_config_map_group. Read an SDO before this and the slave is very
-    // likely still in INIT, where the mailbox is not active, so every read
-    // fails -- silently, if the caller does not check.
-    (void)ecx_statecheck(&ctx_, 0, EC_STATE_PRE_OP, cfg_.state_timeout_us);
-
-    // Read the real PDO layout off each device, now that the mailbox answers.
     for (int i = 1; i <= slave_count_; i++) {
         slaves_[i].has_coe = (ctx_.slavelist[i].mbx_proto & ECT_MBXPROT_COE) != 0;
         slaves_[i].has_soe = (ctx_.slavelist[i].mbx_proto & ECT_MBXPROT_SOE) != 0;
-        (void)discover_pdo_map(i);
     }
 
     iomap_size_ = ecx_config_map_group(&ctx_, iomap_, 0);
@@ -220,15 +209,35 @@ BusResult Bus::configure() noexcept {
         return BusResult::MappingFailed;
     }
 
-    // Register CoE slaves for cyclic mailbox handling — AFTER the mapping, not
-    // before. ecx_slavembxcyclic bails out unless slavelist[i].mbxstatus is set,
-    // and that pointer is assigned inside ecx_config_map_group. Called any
+    // Discover the PDO layout HERE, after mapping, not before.
+    //
+    // The obvious place is right after ecx_config_init, in PRE-OP, and it does
+    // not work: ecx_config_init REQUESTS PRE-OP but does not wait for it --
+    // SOEM's own statecheck for PRE-OP lives in ecx_map_coe_soe, which does not
+    // run until ecx_config_map_group. Reading earlier means reading the mailbox
+    // of a slave that may still be in INIT, where the mailbox is not active.
+    //
+    // Waiting for PRE-OP explicitly was not enough on Yaskawa Sigma-X hardware;
+    // reading after the mapping is what actually answers. Measured, not
+    // reasoned: the identical reads failed before this point and succeeded
+    // after it. Only the byte offsets WITHIN each slave's area are computed
+    // here, and those do not depend on where the mapping put that area, so
+    // nothing is lost by doing it late.
+    //
+    // Rewriting a mapping is a different matter and does require PRE-OP.
+    for (int i = 1; i <= slave_count_; i++) {
+        (void)discover_pdo_map(i);
+    }
+
+    // Register CoE slaves for cyclic mailbox handling — after the mapping, and
+    // after discovery. ecx_slavembxcyclic bails out unless slavelist[i].mbxstatus
+    // is set, and that pointer is assigned inside ecx_config_map_group, so any
     // earlier it returns 0 and does nothing at all.
     //
-    // Only when someone is actually pumping the queue. Once a slave is cyclic,
-    // ecx_mbxsend queues the request and waits for ecx_mbxhandler to service it;
-    // a caller that never cycles would block until timeout on every SDO. That is
-    // why this is tied to mailbox_per_cycle: it is the same decision.
+    // After discovery because once a slave is cyclic, ecx_mbxsend queues the
+    // request and waits for ecx_mbxhandler to service it -- and nothing is
+    // pumping that queue until the caller starts cycling. Every SDO issued
+    // between here and the first exchange() would block until timeout.
     if (cfg_.mailbox_per_cycle > 0) {
         for (int i = 1; i <= slave_count_; i++) {
             if (slaves_[i].has_coe) {

@@ -77,6 +77,90 @@ void print_pdo_map(const AxisPdoMap& m) {
     }
 }
 
+/// What object is this, in CNC terms?
+const char* object_role(std::uint16_t index) {
+    switch (index) {
+        case 0x6040: return "controlword          REQUIRED";
+        case 0x607A: return "target position      REQUIRED for CSP";
+        case 0x6060: return "modes of operation   sets CSP over PDO";
+        case 0x60B1: return "velocity offset      VELOCITY FEEDFORWARD";
+        case 0x60B2: return "torque offset        torque feedforward";
+        case 0x60B8: return "touch probe function";
+        case 0x6041: return "statusword           REQUIRED";
+        case 0x6064: return "position actual      REQUIRED for CSP";
+        case 0x6061: return "modes display        confirms CSP took";
+        case 0x60F4: return "following error      master-side supervision";
+        case 0x606C: return "velocity actual";
+        case 0x6077: return "torque actual";
+        case 0x60FD: return "digital inputs       limits, home switch";
+        case 0x603F: return "error code";
+        case 0x0000: return "PADDING";
+        default:     return "";
+    }
+}
+
+/// List every PDO mapping object the device will talk about, not just the one
+/// currently assigned.
+///
+/// The assigned mapping is often the minimal one -- controlword and target
+/// position out, statusword and position actual in -- which is enough to move
+/// an axis and not enough to do it well. Velocity feedforward needs 0x60B1
+/// mapped, and nothing can add it at runtime: either another predefined mapping
+/// already contains it, or the mapping has to be rewritten in PRE-OP.
+///
+/// This says which. Print it before deciding how to configure the drive.
+void print_pdo_catalog(Bus& bus, int slave) {
+    std::printf("    --- PDO mapping objects this device offers ---\n");
+
+    struct Group {
+        const char* label;
+        std::uint16_t first;
+        std::uint16_t last;
+    };
+    // 0x1600-0x17FF is the RxPDO range and 0x1A00-0x1BFF the TxPDO range.
+    // Scanning the first few of each finds the vendor's predefined sets without
+    // issuing hundreds of SDO reads.
+    const Group groups[2] = {{"master to drive", 0x1600, 0x1607},
+                             {"drive to master", 0x1A00, 0x1A07}};
+
+    for (const Group& g : groups) {
+        std::printf("      %s:\n", g.label);
+        bool found_any = false;
+
+        for (std::uint16_t m = g.first; m <= g.last; m++) {
+            std::uint8_t entries = 0;
+            if (!bus.read_sdo_u8(slave, m, 0x00, entries)) {
+                continue;  // not implemented; silence is the useful answer here
+            }
+            found_any = true;
+            std::printf("        0x%04X  %u entries\n", m, entries);
+
+            std::uint32_t bits = 0;
+            for (std::uint8_t e = 1; e <= entries; e++) {
+                std::uint32_t raw = 0;
+                if (!bus.read_sdo_u32(slave, m, e, raw)) {
+                    std::printf("          [%u] READ FAILED\n", e);
+                    continue;
+                }
+                std::uint16_t idx = 0;
+                std::uint8_t sub = 0;
+                std::uint8_t len = 0;
+                decode_mapping_entry(raw, idx, sub, len);
+                bits += len;
+                std::printf("          0x%04X:%02X %3u bits  %s\n", idx, sub, len,
+                            object_role(idx));
+            }
+            if (entries > 0) {
+                std::printf("          = %u bytes\n", bits / 8);
+            }
+        }
+
+        if (!found_any) {
+            std::printf("        none answered — fixed mapping, use the ESI XML\n");
+        }
+    }
+}
+
 /// Dump the PDO assignment objects raw, one SDO read at a time.
 ///
 /// Runs when discovery came back empty. Discovery walks
@@ -382,6 +466,7 @@ int main(int argc, char** argv) {
                     s.out_bytes, s.in_bytes);
                 probe_pdo_assignment(*bus, i);
             }
+            print_pdo_catalog(*bus, i);
             print_drive_diagnostics(*bus, i);
         }
         std::printf("\n");
