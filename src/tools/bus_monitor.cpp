@@ -59,6 +59,9 @@ struct Options {
     int cpu = 2;
     long duration_s = 60;   ///< 0 runs until interrupted
     long interval_ms = 1000;
+    long dc_tolerance_ns = 0;   ///< 0 keeps the DcSync default
+    long dc_lock_cycles = 0;    ///< 0 keeps the DcSync default
+    long rx_timeout_us = 0;     ///< 0 derives from the cycle
     bool block_lrw = false;
     bool no_dc = false;
 };
@@ -73,6 +76,9 @@ void usage() {
         "  --cpu N         isolated CPU to pin the RT thread to (default 2)\n"
         "  --duration N    seconds to run, 0 for until Ctrl-C (default 60)\n"
         "  --interval N    milliseconds between report lines (default 1000)\n"
+        "  --dc-tol N      DC phase error counted as in-lock, ns (default 1000)\n"
+        "  --dc-lock N     consecutive in-tolerance cycles to declare lock (100)\n"
+        "  --rx-timeout N  frame receive timeout, us (default: cycle/4)\n"
         "  --block-lrw     force LRD/LWR instead of LRW (Yaskawa Sigma-7)\n"
         "  --no-dc         run without distributed clocks (diagnostics only)\n"
         "\n"
@@ -146,6 +152,12 @@ bool parse_args(int argc, char** argv, Options& o) {
             o.duration_s = n;
         } else if (std::strcmp(a, "--interval") == 0) {
             o.interval_ms = n;
+        } else if (std::strcmp(a, "--dc-tol") == 0) {
+            o.dc_tolerance_ns = n;
+        } else if (std::strcmp(a, "--dc-lock") == 0) {
+            o.dc_lock_cycles = n;
+        } else if (std::strcmp(a, "--rx-timeout") == 0) {
+            o.rx_timeout_us = n;
         } else {
             std::printf("unknown option %s\n", a);
             return false;
@@ -194,6 +206,15 @@ int main(int argc, char** argv) {
     cfg.bus.sync0_shift_ns = static_cast<std::int32_t>(cfg.bus.cycle_ns / 4);
     cfg.bus.use_dc = !o.no_dc;
     cfg.bus.force_block_lrw = o.block_lrw;
+    if (o.rx_timeout_us > 0) {
+        cfg.bus.rx_timeout_us = static_cast<int>(o.rx_timeout_us);
+    }
+    if (o.dc_tolerance_ns > 0) {
+        cfg.bus.dc.lock_tolerance_ns = o.dc_tolerance_ns;
+    }
+    if (o.dc_lock_cycles > 0) {
+        cfg.bus.dc.lock_cycles = static_cast<std::uint32_t>(o.dc_lock_cycles);
+    }
 
     cfg.rt.cpu = o.cpu;
     cfg.machine.axis_count = o.axes;
@@ -301,6 +322,12 @@ int main(int argc, char** argv) {
     std::printf("  cycles            %" PRIu64 "\n", s.cycle);
     std::printf("  working counter   %d of %d expected\n", s.working_counter, s.expected_wkc);
     std::printf("  wkc errors        %" PRIu64 "\n", s.wkc_errors);
+    // The number that separates a lost frame from a late one.
+    std::printf("  max exchange      %.1f us\n",
+                static_cast<double>(task->bus().max_exchange_ns()) / 1000.0);
+    std::printf("  max exchange BAD  %.1f us   (rx timeout %d us)\n",
+                static_cast<double>(task->bus().max_failed_exchange_ns()) / 1000.0,
+                task->bus().rx_timeout_us());
     std::printf("  reached OP        %s\n", reached_op ? "yes" : "NO");
     std::printf("  stayed in OP      %s\n", lost_op ? "NO -- dropped out" : "yes");
     if (!o.no_dc) {
@@ -338,10 +365,21 @@ int main(int argc, char** argv) {
     std::printf("\n  %s\n", pass ? "COMMUNICATION OK" : "PROBLEMS FOUND");
 
     if (s.wkc_errors > 0) {
-        std::printf(
-            "  Working counter errors mean frames came back incomplete. Check\n"
-            "  cabling and the NIC first -- a Realtek under load is the usual\n"
-            "  cause. See docs/03-ethercat-bringup.md.\n");
+        const double bad_us = static_cast<double>(task->bus().max_failed_exchange_ns()) / 1000.0;
+        const double timeout_us = static_cast<double>(task->bus().rx_timeout_us());
+        if (bad_us >= timeout_us * 0.9) {
+            std::printf(
+                "  Frames are being LOST, not delayed: the worst bad cycle sat at\n"
+                "  the receive timeout, meaning nothing came back at all. That is\n"
+                "  cabling, a port, or the NIC dropping frames.\n");
+        } else {
+            std::printf(
+                "  Frames are coming back LATE, not lost: the worst bad cycle\n"
+                "  finished well inside the receive timeout. Raising --rx-timeout\n"
+                "  may clear it, but late frames on an idle bus mean the NIC or\n"
+                "  its interrupt path is the limit.\n");
+        }
+        std::printf("  See docs/03-ethercat-bringup.md.\n");
     }
     if (!o.no_dc && !s.dc_locked) {
         std::printf(

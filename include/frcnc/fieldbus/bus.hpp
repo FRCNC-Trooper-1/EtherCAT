@@ -155,6 +155,14 @@ struct ExchangeStatus {
     std::uint64_t wkc_errors = 0;
     std::uint32_t consecutive_wkc_errors = 0;
 
+    /// Wall time spent inside send + receive this cycle.
+    ///
+    /// This is what separates a LOST frame from a LATE one. A frame that never
+    /// comes back costs the full receive timeout; a frame that is merely slow
+    /// costs whatever it actually took. Same working-counter error either way,
+    /// completely different fault.
+    std::int64_t exchange_ns = 0;
+
     /// True when everything is nominal this cycle. A false here is a fault
     /// condition: on a CNC it means a coordinated stop of every axis.
     [[nodiscard]] bool healthy() const noexcept { return wkc_ok; }
@@ -213,6 +221,15 @@ public:
     /// Resolved receive timeout actually in use, microseconds.
     [[nodiscard]] int rx_timeout_us() const noexcept { return rx_timeout_us_; }
 
+    /// Longest exchange seen, and the longest seen on a cycle whose working
+    /// counter was wrong. If the failing figure sits at the receive timeout the
+    /// frames are being lost; if it sits well below, they are arriving late and
+    /// the timeout is what rejected them.
+    [[nodiscard]] std::int64_t max_exchange_ns() const noexcept { return max_exchange_ns_; }
+    [[nodiscard]] std::int64_t max_failed_exchange_ns() const noexcept {
+        return max_failed_exchange_ns_;
+    }
+
     /// Re-read every slave's actual EtherCAT state. Not real-time: this issues
     /// datagrams outside the cyclic exchange.
     [[nodiscard]] int read_lowest_state() noexcept;
@@ -262,6 +279,8 @@ private:
 
     int expected_wkc_ = 0;
     int rx_timeout_us_ = 250;
+    std::int64_t max_exchange_ns_ = 0;
+    std::int64_t max_failed_exchange_ns_ = 0;
     std::uint64_t cycles_ = 0;
     std::uint64_t wkc_errors_ = 0;
     std::uint32_t consecutive_wkc_errors_ = 0;

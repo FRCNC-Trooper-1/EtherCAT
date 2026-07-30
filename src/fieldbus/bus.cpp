@@ -3,6 +3,7 @@
 #include "frcnc/fieldbus/bus.hpp"
 
 #include <cstdio>
+#include <ctime>
 #include <cstring>
 
 namespace frcnc::fieldbus {
@@ -312,8 +313,18 @@ ExchangeStatus Bus::exchange() noexcept {
         return st;
     }
 
+    struct timespec t0 {};
+    struct timespec t1 {};
+    (void)clock_gettime(CLOCK_MONOTONIC, &t0);
+
     (void)ecx_send_processdata(&ctx_);
     const int wkc = ecx_receive_processdata(&ctx_, rx_timeout_us_);
+
+    (void)clock_gettime(CLOCK_MONOTONIC, &t1);
+    st.exchange_ns = ((t1.tv_sec - t0.tv_sec) * 1'000'000'000LL) + (t1.tv_nsec - t0.tv_nsec);
+    if (st.exchange_ns > max_exchange_ns_) {
+        max_exchange_ns_ = st.exchange_ns;
+    }
 
     // Drain queued mailbox traffic. Required in v2 so SDO access stays possible
     // while the bus is in OP.
@@ -328,6 +339,9 @@ ExchangeStatus Bus::exchange() noexcept {
     st.wkc_ok = (wkc >= expected_wkc_);
 
     if (!st.wkc_ok) {
+        if (st.exchange_ns > max_failed_exchange_ns_) {
+            max_failed_exchange_ns_ = st.exchange_ns;
+        }
         wkc_errors_++;
         if (consecutive_wkc_errors_ < 0xFFFFFFFFu) {
             consecutive_wkc_errors_++;
