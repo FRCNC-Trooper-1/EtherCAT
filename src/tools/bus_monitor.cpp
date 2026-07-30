@@ -337,6 +337,8 @@ int main(int argc, char** argv) {
     std::printf("  max exchange BAD  %.1f us   (rx timeout %d us)\n",
                 static_cast<double>(task->bus().max_failed_exchange_ns()) / 1000.0,
                 task->bus().rx_timeout_us());
+    std::printf("  worst bad wkc     %d of %d\n", task->bus().min_failed_wkc(),
+                s.expected_wkc);
     std::printf("  reached OP        %s\n", reached_op ? "yes" : "NO");
     std::printf("  stayed in OP      %s\n", lost_op ? "NO -- dropped out" : "yes");
     if (!o.no_dc) {
@@ -400,10 +402,13 @@ int main(int argc, char** argv) {
         if (all_clean) {
             std::printf(
                 "\n  Every slave saw a clean wire, yet the master lost %" PRIu64 " frames.\n"
-                "  Nothing went wrong ON the segment: the frames never got back to\n"
-                "  the host. That is the NIC or its driver dropping on receive, not\n"
-                "  cabling. Swap to an Intel i210/i211 before tuning anything else.\n",
-                s.wkc_errors);
+                "  No frame was CORRUPTED on the segment -- which, with a worst bad\n"
+                "  working counter of %d, means the frame never made a round trip at\n"
+                "  all rather than dying partway along it. The host either failed to\n"
+                "  put it on the wire or failed to deliver it back up. Either way it\n"
+                "  is the NIC or its driver, not cabling: fit an Intel i210/i211\n"
+                "  before tuning anything else.\n",
+                s.wkc_errors, task->bus().min_failed_wkc());
         } else {
             std::printf(
                 "\n  A slave counted errors on the wire. The port with a non-zero\n"

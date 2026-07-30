@@ -256,6 +256,15 @@ public:
         return max_failed_exchange_ns_;
     }
 
+    /// Lowest working counter seen on a cycle that failed, or -1 if none has.
+    ///
+    /// Distinguishes a frame that never completed a round trip from one that
+    /// was cut short partway along the segment. Zero means no slave processed
+    /// it at all -- it was dropped before it reached the first drive, or after
+    /// the last one handed it back. A partial count means the frame died in the
+    /// middle, and the number says how far it got.
+    [[nodiscard]] int min_failed_wkc() const noexcept { return min_failed_wkc_; }
+
     /// Re-read every slave's actual EtherCAT state. Not real-time: this issues
     /// datagrams outside the cyclic exchange.
     [[nodiscard]] int read_lowest_state() noexcept;
@@ -314,6 +323,7 @@ private:
     int rx_timeout_us_ = 250;
     std::int64_t max_exchange_ns_ = 0;
     std::int64_t max_failed_exchange_ns_ = 0;
+    int min_failed_wkc_ = -1;
     std::uint64_t cycles_ = 0;
     std::uint64_t wkc_errors_ = 0;
     std::uint32_t consecutive_wkc_errors_ = 0;

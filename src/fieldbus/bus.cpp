@@ -342,6 +342,9 @@ ExchangeStatus Bus::exchange() noexcept {
         if (st.exchange_ns > max_failed_exchange_ns_) {
             max_failed_exchange_ns_ = st.exchange_ns;
         }
+        if (min_failed_wkc_ < 0 || wkc < min_failed_wkc_) {
+            min_failed_wkc_ = wkc;
+        }
         wkc_errors_++;
         if (consecutive_wkc_errors_ < 0xFFFFFFFFu) {
             consecutive_wkc_errors_++;
