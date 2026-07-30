@@ -115,6 +115,31 @@ The soak test that matters now is at the system level, not the timing level:
 jitter with no fieldbus traffic is a floor, not a prediction, and the NIC is the
 component most likely to move it.
 
+### Distributed Clocks — validated on hardware
+
+**DC acquires lock, and the bus reaches OPERATIONAL because of it.** Confirmed
+against two Sigma-X drives at a 4 ms cycle: lock acquired at ~5 s, `OPERATIONAL`
+at 6 s, best run 181 consecutive in-tolerance cycles against a requirement of
+100. The full chain is exercised — `ecx_configdc`, Sync0 distribution, the PI
+drift controller, and the gate that refuses OP until lock.
+
+Lock is **acquired but not continuously held** on this NIC. Phase excursions of
+8–12 µs appear during the run, correlated with host jitter spikes (max 15.5 µs).
+
+That is not by itself a fault, and the distinction matters:
+
+- **Acquiring** lock gates OPERATIONAL and must be strict. Requesting OP while
+  the master is still hunting makes drives fault on sync error.
+- **Holding** it is a matter of degree. Once slaves are in OP, their Sync0
+  pulses come from the distributed clock **in hardware**. A momentary excursion
+  in the *master's* cycle phase costs nothing provided the frame still arrives
+  before Sync0 fires.
+
+So the number to judge against is the **Sync0 shift** (cycle/4 by default —
+1 ms at a 4 ms cycle), not the lock tolerance. A 12 µs excursion against a 1 ms
+margin is 1.2 % of the budget. Excursions approaching the shift are the real
+fault, and none were seen.
+
 ### NIC disqualification — Realtek r8169
 
 **Measured, on this machine, against two Yaskawa Sigma-X drives.** The onboard

@@ -361,10 +361,17 @@ int main(int argc, char** argv) {
     std::printf("  reached OP        %s\n", reached_op ? "yes" : "NO");
     std::printf("  stayed in OP      %s\n", lost_op ? "NO -- dropped out" : "yes");
     if (!o.no_dc) {
-        std::printf("  DC locked         %s\n", s.dc_locked ? "yes" : "NO");
+        const bool ever = task->bus().dc().ever_locked();
+        std::printf("  DC acquired lock  %s\n", ever ? "yes" : "NO");
+        std::printf("  DC locked now     %s\n", s.dc_locked ? "yes" : "no");
         std::printf("  DC peak error     %+" PRId64 " ns\n", dc_peak);
         std::printf("  DC best lock run  %u cycles in tolerance\n",
                     task->bus().dc().peak_lock_run());
+        // The number that decides whether a frame still beats Sync0. Phase
+        // error only matters relative to the shift; an excursion far inside it
+        // is not a fault however far outside the lock tolerance it sits.
+        std::printf("  Sync0 shift       %d ns  (phase margin)\n",
+                    cfg.bus.sync0_shift_ns);
     }
     // Reported separately and always: a loop that quietly ran without
     // SCHED_FIFO explains every timing number above it.
@@ -451,8 +458,11 @@ int main(int argc, char** argv) {
 
     // --- verdict ------------------------------------------------------------
 
+    // Acquisition, not the instantaneous state. A bus that locked, went
+    // operational and is running is a passing bus even if the phase happens to
+    // be outside the lock tolerance at the moment the run ended.
     bool pass = reached_op && !lost_op && s.wkc_errors == 0 && stalled_reports == 0;
-    if (!o.no_dc && !s.dc_locked) {
+    if (!o.no_dc && !task->bus().dc().ever_locked()) {
         pass = false;
     }
 
@@ -475,10 +485,18 @@ int main(int argc, char** argv) {
         }
         std::printf("  See docs/03-ethercat-bringup.md.\n");
     }
-    if (!o.no_dc && !s.dc_locked) {
+    if (!o.no_dc && !task->bus().dc().ever_locked()) {
         std::printf(
             "  DC never locked. Every drive will trip a sync error the moment\n"
             "  you enable it. Do not proceed to motion until this is clean.\n");
+    } else if (!o.no_dc && !s.dc_locked) {
+        std::printf(
+            "  DC acquired lock but was not in tolerance when the run ended.\n"
+            "  Not necessarily a fault: once the slaves are in OP their Sync0\n"
+            "  comes from the distributed clock in hardware, so what matters is\n"
+            "  whether the frame still arrives before Sync0 fires -- compare the\n"
+            "  peak error against the Sync0 shift above, not against the lock\n"
+            "  tolerance. Excursions near or beyond the shift are the real fault.\n");
     }
     if (stalled_reports > 0) {
         std::printf("  The cycle counter stopped advancing %" PRIu64

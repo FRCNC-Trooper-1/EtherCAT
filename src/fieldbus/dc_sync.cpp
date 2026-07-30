@@ -67,6 +67,7 @@ void DcSync::reset() noexcept {
     cycles_ = 0;
     in_tolerance_run_ = 0;
     peak_lock_run_ = 0;
+    ever_locked_ = false;
 }
 
 std::int64_t DcSync::update(std::int64_t dc_time_ns) noexcept {
@@ -108,6 +109,9 @@ std::int64_t DcSync::update(std::int64_t dc_time_ns) noexcept {
         }
         if (in_tolerance_run_ > peak_lock_run_) {
             peak_lock_run_ = in_tolerance_run_;
+        }
+        if (in_tolerance_run_ >= cfg_.lock_cycles) {
+            ever_locked_ = true;
         }
     } else {
         in_tolerance_run_ = 0;

@@ -97,6 +97,18 @@ public:
     /// Consecutive in-tolerance cycles so far.
     [[nodiscard]] std::uint32_t lock_run() const noexcept { return in_tolerance_run_; }
 
+    /// Has lock EVER been achieved, regardless of the current state?
+    ///
+    /// Acquiring lock and holding it are different questions with different
+    /// answers. Acquisition is what gates OPERATIONAL and has to be strict.
+    /// Holding it is a matter of degree: once the slaves are in OP their Sync0
+    /// pulses come from the distributed clock in hardware, so a momentary
+    /// excursion in the MASTER's cycle phase costs nothing as long as the frame
+    /// still arrives before Sync0 fires. Reporting only the instantaneous state
+    /// makes a bus that locked, went operational and is running normally look
+    /// like one that never locked at all.
+    [[nodiscard]] bool ever_locked() const noexcept { return ever_locked_; }
+
     /// Longest run of in-tolerance cycles ever achieved. When lock never
     /// happens this says whether the controller was close or nowhere near --
     /// a peak of 90 against a requirement of 100 is a different problem from a
@@ -115,6 +127,7 @@ private:
     std::uint64_t cycles_ = 0;
     std::uint32_t in_tolerance_run_ = 0;
     std::uint32_t peak_lock_run_ = 0;
+    bool ever_locked_ = false;
 };
 
 /// Phase error of `dc_time` relative to the cycle, folded into
