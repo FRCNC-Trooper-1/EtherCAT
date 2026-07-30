@@ -451,6 +451,19 @@ bool PortErrors::clean() const noexcept {
     return total() == 0;
 }
 
+bool PortErrors::detected_error() const noexcept {
+    for (int i = 0; i < 4; i++) {
+        if (invalid_frame[i] != 0 || rx_error[i] != 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool PortErrors::forwarded_only() const noexcept {
+    return !detected_error() && total() > 0;
+}
+
 unsigned PortErrors::total() const noexcept {
     unsigned n = processing_unit_error + pdi_error;
     for (int i = 0; i < 4; i++) {

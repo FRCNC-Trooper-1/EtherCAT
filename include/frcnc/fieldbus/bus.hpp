@@ -192,6 +192,23 @@ struct PortErrors {
 
     /// Total across every port, for a one-line verdict.
     [[nodiscard]] unsigned total() const noexcept;
+
+    /// Did any port DETECT a physical-layer error itself?
+    ///
+    /// This is the distinction that matters, and conflating it with the
+    /// forwarded counters points the finger at the wrong component. A port only
+    /// increments invalid_frame or rx_error for damage it found on the wire
+    /// arriving at THAT port -- so a non-zero count here indicts the segment
+    /// feeding it.
+    [[nodiscard]] bool detected_error() const noexcept;
+
+    /// Did this slave only ever pass on damage someone else had already marked?
+    ///
+    /// forwarded_rx_error counts frames that arrived ALREADY flagged. On its
+    /// own, with every detection counter clear, it says the corruption happened
+    /// upstream of this device -- and if the first slave's IN port is also
+    /// clean, upstream of every slave, which leaves the master.
+    [[nodiscard]] bool forwarded_only() const noexcept;
 };
 
 /// Owns the bus. Large (SOEM's context embeds all slave storage) — allocate

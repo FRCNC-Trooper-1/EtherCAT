@@ -393,6 +393,8 @@ int main(int argc, char** argv) {
     std::printf("\n--- slave-side error counters (this run) ---\n");
     bool all_clean = true;
     bool read_any = false;
+    bool any_detected = false;   ///< a port found damage itself
+    bool any_forwarded = false;  ///< a port only passed on damage found elsewhere
     {
         auto& mutable_bus = const_cast<fieldbus::Bus&>(task->bus());
         for (int i = 1; i <= mutable_bus.slave_count(); i++) {
@@ -407,6 +409,8 @@ int main(int argc, char** argv) {
                 continue;
             }
             all_clean = false;
+            any_detected |= pe.detected_error();
+            any_forwarded |= pe.forwarded_only();
             std::printf("  slave %d: invalid=%u/%u/%u/%u  rxerr=%u/%u/%u/%u  "
                         "fwd=%u/%u/%u/%u  lostlink=%u/%u/%u/%u  pu=%u pdi=%u\n",
                         i, pe.invalid_frame[0], pe.invalid_frame[1], pe.invalid_frame[2],
@@ -428,12 +432,20 @@ int main(int argc, char** argv) {
                 "  is the NIC or its driver, not cabling: fit an Intel i210/i211\n"
                 "  before tuning anything else.\n",
                 s.wkc_errors, task->bus().min_failed_wkc());
-        } else {
+        } else if (any_detected) {
             std::printf(
-                "\n  A slave counted errors on the wire. The port with a non-zero\n"
-                "  count is the one RECEIVING the bad frames, so the fault is in the\n"
-                "  segment feeding it -- cable, connector, or noise. Port 0 is the\n"
-                "  IN port; a count there on slave 1 means the run from the NIC.\n");
+                "\n  A port DETECTED damage itself (invalid frames or RX errors), so\n"
+                "  the segment feeding that port is at fault -- cable, connector, or\n"
+                "  noise. Port 0 is the IN port; a count there on slave 1 means the\n"
+                "  run from the NIC.\n");
+        } else if (any_forwarded) {
+            std::printf(
+                "\n  No port detected damage: every non-zero counter is a FORWARDED\n"
+                "  error, meaning the frame arrived already flagged by something\n"
+                "  upstream. With the first slave's IN port clean too, the damage\n"
+                "  happened before the frame reached any drive -- so this is the\n"
+                "  master mangling frames on transmit, the same fault as the losses\n"
+                "  above, and not a cabling problem between the drives.\n");
         }
     }
 
