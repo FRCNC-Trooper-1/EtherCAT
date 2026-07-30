@@ -19,6 +19,7 @@
 //
 // Reference: docs/03-ethercat-bringup.md, docs/06-vendor-notes.md
 
+#include "frcnc/drive/cia402.hpp"
 #include "frcnc/fieldbus/bus.hpp"
 
 #include <cinttypes>
@@ -72,6 +73,76 @@ void print_pdo_map(const AxisPdoMap& m) {
         std::printf("    ** No 0x60B1. Without velocity feedforward the servo loop must\n");
         std::printf("       generate following error to produce velocity, which distorts\n");
         std::printf("       the path on every corner. See docs/05-motion-architecture.md.\n");
+    }
+}
+
+/// Read the CiA 402 diagnostic objects over SDO.
+///
+/// This is what answers "the drive is sitting in Fault -- why?". The statusword
+/// only says that it faulted; 0x603F says what the drive thinks went wrong, and
+/// 0x1001 says which class of problem it is. With no motor connected, expect an
+/// encoder or motor-detection alarm here -- that is correct, not a bus problem.
+void print_drive_diagnostics(Bus& bus, int slave) {
+    std::printf("    --- CiA 402 diagnostics (SDO) ---\n");
+
+    std::uint32_t modes = 0;
+    if (bus.read_sdo_u32(slave, 0x6502, 0x00, modes)) {
+        // 0x6502 bit assignments, IEC 61800-7-201. Bit 7 is the one a CNC needs.
+        std::printf("      Supported modes (0x6502) : 0x%08" PRIX32 "  %s%s%s%s\n", modes,
+                    (modes & (1u << 7)) ? "CSP " : "",
+                    (modes & (1u << 8)) ? "CSV " : "",
+                    (modes & (1u << 6)) ? "IP " : "",
+                    (modes & (1u << 5)) ? "HM" : "");
+        if ((modes & (1u << 7)) == 0) {
+            std::printf("      ** No CSP. This drive cannot do coordinated CNC motion.\n");
+        }
+    } else {
+        std::printf("      Supported modes (0x6502) : not readable\n");
+    }
+
+    std::int8_t mode_display = 0;
+    if (bus.read_sdo_i8(slave, 0x6061, 0x00, mode_display)) {
+        std::printf("      Mode display    (0x6061) : %d\n", mode_display);
+    }
+
+    std::uint16_t statusword = 0;
+    if (bus.read_sdo_u16(slave, 0x6041, 0x00, statusword)) {
+        std::printf("      Statusword      (0x6041) : 0x%04X  %s\n", statusword,
+                    frcnc::drive::to_string(frcnc::drive::decode_state(statusword)));
+    }
+
+    std::uint8_t error_register = 0;
+    if (bus.read_sdo_u8(slave, 0x1001, 0x00, error_register)) {
+        std::printf("      Error register  (0x1001) : 0x%02X\n", error_register);
+    }
+
+    std::uint16_t error_code = 0;
+    if (bus.read_sdo_u16(slave, 0x603F, 0x00, error_code)) {
+        std::printf("      Error code      (0x603F) : 0x%04X%s\n", error_code,
+                    error_code == 0 ? "  (no fault)" : "");
+        if (error_code != 0) {
+            std::printf("      ** Look this code up in the drive's manual. With no motor\n");
+            std::printf("         connected an encoder alarm here is expected.\n");
+        }
+    }
+
+    // 0x60C2 must equal the master's cycle time exactly. A drive interpolating
+    // over a different period than the master produces velocity ripple that
+    // looks like a mechanical problem and is not.
+    std::uint8_t ip_units = 0;
+    std::int8_t ip_index = 0;
+    if (bus.read_sdo_u8(slave, 0x60C2, 0x01, ip_units) &&
+        bus.read_sdo_i8(slave, 0x60C2, 0x02, ip_index)) {
+        // value = units * 10^index seconds
+        double period = static_cast<double>(ip_units);
+        for (int k = 0; k < -ip_index; k++) {
+            period /= 10.0;
+        }
+        for (int k = 0; k < ip_index; k++) {
+            period *= 10.0;
+        }
+        std::printf("      Interp. period  (0x60C2) : %u x 10^%d s = %.1f us\n", ip_units,
+                    ip_index, period * 1e6);
     }
 }
 
@@ -200,6 +271,9 @@ int main(int argc, char** argv) {
 
         if (s.pdo_discovered && s.has_coe) {
             print_pdo_map(s.pdo);
+        }
+        if (s.has_coe) {
+            print_drive_diagnostics(*bus, i);
         }
         std::printf("\n");
     }

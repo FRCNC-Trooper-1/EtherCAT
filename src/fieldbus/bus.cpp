@@ -332,6 +332,39 @@ int Bus::read_lowest_state() noexcept {
     return ecx_readstate(&ctx_);
 }
 
+bool Bus::read_sdo(int slave, std::uint16_t index, std::uint8_t subindex, void* data,
+                   int& size) noexcept {
+    if (state_ == BusState::Closed || slave < 1 || slave > slave_count_ || data == nullptr) {
+        return false;
+    }
+    return ecx_SDOread(&ctx_, static_cast<std::uint16_t>(slave), index, subindex, FALSE, &size,
+                       data, EC_TIMEOUTRXM) > 0;
+}
+
+bool Bus::read_sdo_u8(int slave, std::uint16_t index, std::uint8_t subindex,
+                      std::uint8_t& value) noexcept {
+    int size = static_cast<int>(sizeof(value));
+    return read_sdo(slave, index, subindex, &value, size) && size == sizeof(value);
+}
+
+bool Bus::read_sdo_u16(int slave, std::uint16_t index, std::uint8_t subindex,
+                       std::uint16_t& value) noexcept {
+    int size = static_cast<int>(sizeof(value));
+    return read_sdo(slave, index, subindex, &value, size) && size == sizeof(value);
+}
+
+bool Bus::read_sdo_u32(int slave, std::uint16_t index, std::uint8_t subindex,
+                       std::uint32_t& value) noexcept {
+    int size = static_cast<int>(sizeof(value));
+    return read_sdo(slave, index, subindex, &value, size) && size == sizeof(value);
+}
+
+bool Bus::read_sdo_i8(int slave, std::uint16_t index, std::uint8_t subindex,
+                      std::int8_t& value) noexcept {
+    int size = static_cast<int>(sizeof(value));
+    return read_sdo(slave, index, subindex, &value, size) && size == sizeof(value);
+}
+
 void Bus::close() noexcept {
     if (state_ == BusState::Closed) {
         return;

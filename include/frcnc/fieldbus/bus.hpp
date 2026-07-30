@@ -176,6 +176,27 @@ public:
     /// datagrams outside the cyclic exchange.
     [[nodiscard]] int read_lowest_state() noexcept;
 
+    /// Read an object over SDO.
+    ///
+    /// NOT real-time — this is mailbox traffic, and the response time is at the
+    /// mercy of the slave. Use it during bring-up, or from the non-RT side while
+    /// the cyclic task drains the mailbox queue. Never from the cyclic path.
+    ///
+    /// @param size in: capacity of @p data; out: bytes actually read.
+    /// @return false if the slave refused or did not answer.
+    [[nodiscard]] bool read_sdo(int slave, std::uint16_t index, std::uint8_t subindex,
+                                void* data, int& size) noexcept;
+
+    /// Convenience wrappers for the widths CiA 402 diagnostics use.
+    [[nodiscard]] bool read_sdo_u8(int slave, std::uint16_t index, std::uint8_t subindex,
+                                   std::uint8_t& value) noexcept;
+    [[nodiscard]] bool read_sdo_u16(int slave, std::uint16_t index, std::uint8_t subindex,
+                                    std::uint16_t& value) noexcept;
+    [[nodiscard]] bool read_sdo_u32(int slave, std::uint16_t index, std::uint8_t subindex,
+                                    std::uint32_t& value) noexcept;
+    [[nodiscard]] bool read_sdo_i8(int slave, std::uint16_t index, std::uint8_t subindex,
+                                   std::int8_t& value) noexcept;
+
     /// Drain SOEM's error list into a caller buffer. Not real-time.
     /// @return number of characters written, excluding the terminator.
     std::size_t drain_errors(char* buffer, std::size_t capacity) noexcept;

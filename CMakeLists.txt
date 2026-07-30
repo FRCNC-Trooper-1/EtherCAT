@@ -189,7 +189,10 @@ if(FRCNC_WITH_SOEM)
     add_executable(bus_scan src/tools/bus_scan.cpp)
     # SOEM's headers are C and trip our stricter C++ warnings; keep frcnc_flags
     # off this target and rely on the compiler defaults.
-    target_link_libraries(bus_scan PRIVATE frcnc_bus)
+    target_link_libraries(bus_scan PRIVATE frcnc_bus frcnc_drive)
+
+    add_executable(bus_monitor src/tools/bus_monitor.cpp)
+    target_link_libraries(bus_monitor PRIVATE frcnc_task)
 
     add_executable(axis_jog src/tools/axis_jog.cpp)
     target_link_libraries(axis_jog PRIVATE frcnc_task frcnc_motion)

@@ -216,7 +216,7 @@ void CyclicTask::run() noexcept {
     bool shutting_down = false;
 
     for (;;) {
-        (void)timer.wait_next();
+        const std::int64_t jitter_ns = timer.wait_next();
 
         const fb::ExchangeStatus st = bus_.exchange();
 
@@ -265,7 +265,7 @@ void CyclicTask::run() noexcept {
         BusInputs in;
         read_inputs(in, st);
 
-        machine_.set_timing(timer.stats().max_jitter_ns, timer.stats().max_jitter_ns);
+        machine_.set_timing(jitter_ns, timer.stats().max_jitter_ns);
         const MachineOutputs out = machine_.update(in);
         write_outputs(out);
 
