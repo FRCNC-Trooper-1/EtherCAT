@@ -62,6 +62,7 @@ struct Options {
     long dc_tolerance_ns = 0;   ///< 0 keeps the DcSync default
     long dc_lock_cycles = 0;    ///< 0 keeps the DcSync default
     long rx_timeout_us = 0;     ///< 0 derives from the cycle
+    long dc_timeout_cycles = 0; ///< 0 keeps the CyclicTask default
     bool block_lrw = false;
     bool no_dc = false;
 };
@@ -79,6 +80,7 @@ void usage() {
         "  --dc-tol N      DC phase error counted as in-lock, ns (default 1000)\n"
         "  --dc-lock N     consecutive in-tolerance cycles to declare lock (100)\n"
         "  --rx-timeout N  frame receive timeout, us (default: cycle/4)\n"
+        "  --dc-timeout N  cycles to wait for DC lock before failing (5000)\n"
         "  --block-lrw     force LRD/LWR instead of LRW (Yaskawa Sigma-7)\n"
         "  --no-dc         run without distributed clocks (diagnostics only)\n"
         "\n"
@@ -158,6 +160,8 @@ bool parse_args(int argc, char** argv, Options& o) {
             o.dc_lock_cycles = n;
         } else if (std::strcmp(a, "--rx-timeout") == 0) {
             o.rx_timeout_us = n;
+        } else if (std::strcmp(a, "--dc-timeout") == 0) {
+            o.dc_timeout_cycles = n;
         } else {
             std::printf("unknown option %s\n", a);
             return false;
@@ -214,6 +218,9 @@ int main(int argc, char** argv) {
     }
     if (o.dc_lock_cycles > 0) {
         cfg.bus.dc.lock_cycles = static_cast<std::uint32_t>(o.dc_lock_cycles);
+    }
+    if (o.dc_timeout_cycles > 0) {
+        cfg.dc_lock_timeout_cycles = static_cast<std::uint32_t>(o.dc_timeout_cycles);
     }
 
     cfg.rt.cpu = o.cpu;
