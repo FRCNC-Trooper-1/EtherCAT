@@ -26,6 +26,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <initializer_list>
 #include <memory>
 
 using namespace frcnc::fieldbus;
@@ -73,6 +74,90 @@ void print_pdo_map(const AxisPdoMap& m) {
         std::printf("    ** No 0x60B1. Without velocity feedforward the servo loop must\n");
         std::printf("       generate following error to produce velocity, which distorts\n");
         std::printf("       the path on every corner. See docs/05-motion-architecture.md.\n");
+    }
+}
+
+/// Dump the PDO assignment objects raw, one SDO read at a time.
+///
+/// Runs when discovery came back empty. Discovery walks
+/// 0x1C12/0x1C13 -> 0x16xx/0x1Axx and gives up quietly on the first read that
+/// does not answer, which is useless when you need to know WHICH read failed.
+/// This says so, and prints what each object actually contains.
+///
+/// A device with a FIXED mapping is a legitimate outcome here: the sync manager
+/// assignment is then not writable and may not even be readable, while the
+/// process data is still laid out correctly. In that case read the byte offsets
+/// off the ESI XML and configure them by hand.
+void probe_pdo_assignment(Bus& bus, int slave) {
+    std::printf("    --- raw PDO assignment probe ---\n");
+
+    struct Assign {
+        const char* label;
+        std::uint16_t index;
+    };
+    const Assign assigns[2] = {{"RxPDO assign (SM2)", 0x1C12},
+                               {"TxPDO assign (SM3)", 0x1C13}};
+
+    bool any = false;
+
+    for (const Assign& a : assigns) {
+        std::uint8_t count = 0;
+        if (!bus.read_sdo_u8(slave, a.index, 0x00, count)) {
+            std::printf("      0x%04X:00  READ FAILED   (%s)\n", a.index, a.label);
+            continue;
+        }
+        any = true;
+        std::printf("      0x%04X:00  = %u        (%s)\n", a.index, count, a.label);
+
+        for (std::uint8_t p = 1; p <= count; p++) {
+            std::uint16_t mapping = 0;
+            if (!bus.read_sdo_u16(slave, a.index, p, mapping)) {
+                std::printf("      0x%04X:%02X  READ FAILED\n", a.index, p);
+                continue;
+            }
+            std::printf("      0x%04X:%02X  = 0x%04X\n", a.index, p, mapping);
+            if (mapping == 0) {
+                continue;
+            }
+
+            std::uint8_t entries = 0;
+            if (!bus.read_sdo_u8(slave, mapping, 0x00, entries)) {
+                std::printf("        0x%04X:00  READ FAILED\n", mapping);
+                continue;
+            }
+            std::printf("        0x%04X:00  = %u entries\n", mapping, entries);
+
+            for (std::uint8_t e = 1; e <= entries; e++) {
+                std::uint32_t raw = 0;
+                if (!bus.read_sdo_u32(slave, mapping, e, raw)) {
+                    std::printf("        0x%04X:%02X  READ FAILED\n", mapping, e);
+                    continue;
+                }
+                std::uint16_t idx = 0;
+                std::uint8_t sub = 0;
+                std::uint8_t bits = 0;
+                decode_mapping_entry(raw, idx, sub, bits);
+                std::printf("        0x%04X:%02X  = 0x%08" PRIX32 "  -> 0x%04X:%02X, %u bits\n",
+                            mapping, e, raw, idx, sub, bits);
+            }
+        }
+    }
+
+    // Some devices refuse the assignment objects but still answer the mapping
+    // objects directly. Worth asking before concluding the mapping is fixed.
+    if (!any) {
+        std::printf("      Assignment objects did not answer. Trying the mapping\n"
+                    "      objects directly:\n");
+        for (std::uint16_t m : {0x1600, 0x1601, 0x1A00, 0x1A01}) {
+            std::uint8_t entries = 0;
+            if (bus.read_sdo_u8(slave, m, 0x00, entries)) {
+                std::printf("        0x%04X:00  = %u entries\n", m, entries);
+            } else {
+                std::printf("        0x%04X:00  READ FAILED\n", m);
+            }
+        }
+        std::printf("      If none answer, this device has a FIXED mapping. Take the\n"
+                    "      byte offsets from its ESI XML and configure them by hand.\n");
     }
 }
 
@@ -282,6 +367,16 @@ int main(int argc, char** argv) {
             print_pdo_map(s.pdo);
         }
         if (s.has_coe) {
+            // An empty map alongside non-zero process data means discovery
+            // failed, not that the device maps nothing. Find out which.
+            if (s.pdo.rx_bytes == 0 && s.pdo.tx_bytes == 0 &&
+                (s.out_bytes > 0 || s.in_bytes > 0)) {
+                std::printf(
+                    "    ** Discovery found no mapping, but the device has %u/%u bytes of\n"
+                    "       process data. The mapping is there; reading it failed.\n",
+                    s.out_bytes, s.in_bytes);
+                probe_pdo_assignment(*bus, i);
+            }
             print_drive_diagnostics(*bus, i);
         }
         std::printf("\n");
