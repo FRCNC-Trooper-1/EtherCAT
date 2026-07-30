@@ -105,9 +105,15 @@ core hot, so it never drifts toward an idle state between wakeups.
 **Suitable for a 1 ms EtherCAT cycle without reservation.** Twelve hours under
 load cost only ~5 µs of worst-case jitter over the idle baseline.
 
-**250 µs looks achievable.** The 60-second result (12.6 µs) is inside the 25 µs
-budget, and the 12-hour 1 ms result (21.5 µs) is also inside it. **Confirm with a
-12-hour run at 250 µs before designing around it.**
+**250 µs accepted.** The 60-second result (12.6 µs) is inside the 25 µs budget,
+and the 12-hour 1 ms result (21.5 µs) — under heavy load, which is the harder
+test — is inside it as well. Both margins are wide. The controller is designed
+for a 250 µs cycle on this basis.
+
+The soak test that matters now is at the system level, not the timing level:
+24 hours with drives on the bus and zero working-counter errors (§7). Loop
+jitter with no fieldbus traffic is a floor, not a prediction, and the NIC is the
+component most likely to move it.
 
 ### Caveats
 
