@@ -127,11 +127,19 @@ void print_pdo_catalog(Bus& bus, int slave) {
         std::printf("      %s:\n", g.label);
         bool found_any = false;
 
+        int consecutive_misses = 0;
         for (std::uint16_t m = g.first; m <= g.last; m++) {
             std::uint8_t entries = 0;
             if (!bus.read_sdo_u8(slave, m, 0x00, entries)) {
-                continue;  // not implemented; silence is the useful answer here
+                // Every miss is an SDO abort that SOEM records. Walking the
+                // whole range floods its error list and buries real faults, so
+                // stop once the vendor has clearly run out of objects.
+                if (++consecutive_misses >= 2) {
+                    break;
+                }
+                continue;
             }
+            consecutive_misses = 0;
             found_any = true;
             std::printf("        0x%04X  %u entries\n", m, entries);
 
@@ -158,6 +166,51 @@ void print_pdo_catalog(Bus& bus, int slave) {
         if (!found_any) {
             std::printf("        none answered — fixed mapping, use the ESI XML\n");
         }
+    }
+}
+
+/// Ask the object dictionary which CNC-relevant objects the device implements.
+///
+/// A mapping can only ever contain objects the device actually has. The
+/// catalogue above shows what the vendor pre-mapped; this shows what is
+/// available to map, which is not the same thing and is the question that
+/// decides whether a custom mapping can carry velocity feedforward.
+///
+/// Presence is tested by reading the object. An abort of 0x06020000 means it
+/// does not exist; anything else means it does.
+void print_object_support(Bus& bus, int slave) {
+    struct Object {
+        std::uint16_t index;
+        const char* name;
+        bool wanted;  ///< called out explicitly when missing
+    };
+    const Object objects[] = {
+        {0x6060, "modes of operation", true},
+        {0x6061, "modes display", true},
+        {0x6064, "position actual", true},
+        {0x6065, "following error window", false},
+        {0x606C, "velocity actual", false},
+        {0x6072, "max torque", false},
+        {0x6077, "torque actual", false},
+        {0x607A, "target position", true},
+        {0x607D, "software position limit", false},
+        {0x60B1, "VELOCITY OFFSET (feedforward)", true},
+        {0x60B2, "torque offset (feedforward)", false},
+        {0x60C2, "interpolation time period", true},
+        {0x60F4, "following error actual", true},
+        {0x60FD, "digital inputs", false},
+        {0x60FF, "target velocity", false},
+    };
+
+    std::printf("    --- object dictionary support ---\n");
+
+    for (const Object& o : objects) {
+        std::uint8_t buffer[8] = {};
+        int size = static_cast<int>(sizeof(buffer));
+        const bool present = bus.read_sdo(slave, o.index, 0x00, buffer, size);
+        std::printf("      0x%04X  %-30s %s%s\n", o.index, o.name,
+                    present ? "present" : "ABSENT",
+                    (!present && o.wanted) ? "   <-- wanted" : "");
     }
 }
 
@@ -467,6 +520,7 @@ int main(int argc, char** argv) {
                 probe_pdo_assignment(*bus, i);
             }
             print_pdo_catalog(*bus, i);
+            print_object_support(*bus, i);
             print_drive_diagnostics(*bus, i);
         }
         std::printf("\n");
