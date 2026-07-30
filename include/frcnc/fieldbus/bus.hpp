@@ -218,9 +218,23 @@ public:
     /// waiting for DC to lock, and before requesting OPERATIONAL.
     [[nodiscard]] ExchangeStatus exchange() noexcept;
 
-    /// Request OPERATIONAL. Requires the exchange to be running and, when DC is
-    /// enabled, the drift controller to be locked.
+    /// Request OPERATIONAL and WAIT for it. Blocks for up to state_timeout_us.
+    ///
+    /// NOT for the cyclic loop — a 200 ms blocking state check inside a 1 ms
+    /// loop is a 200-cycle overrun. Use request_operational() + poll_operational()
+    /// there. Kept for non-real-time callers and tests.
     [[nodiscard]] BusResult go_operational() noexcept;
+
+    /// Ask for OPERATIONAL without waiting. Safe in the cyclic path: it writes
+    /// the AL control register and returns.
+    ///
+    /// Requires the exchange to already be running and, when DC is enabled, the
+    /// drift controller to be locked.
+    [[nodiscard]] BusResult request_operational() noexcept;
+
+    /// Has OPERATIONAL been reached? Issues datagrams, so call it every few
+    /// cycles rather than every cycle. Promotes state() on success.
+    [[nodiscard]] bool poll_operational() noexcept;
 
     /// Request SAFE-OP, stopping motion but leaving the bus up.
     [[nodiscard]] BusResult go_safe_operational() noexcept;
@@ -256,13 +270,15 @@ public:
         return max_failed_exchange_ns_;
     }
 
-    /// Lowest working counter seen on a cycle that failed, or -1 if none has.
+    /// Lowest working counter seen on a cycle that failed, or -2 if none has.
     ///
-    /// Distinguishes a frame that never completed a round trip from one that
-    /// was cut short partway along the segment. Zero means no slave processed
-    /// it at all -- it was dropped before it reached the first drive, or after
-    /// the last one handed it back. A partial count means the frame died in the
-    /// middle, and the number says how far it got.
+    /// Distinguishes a frame that never came back from one that was cut short
+    /// partway along the segment:
+    ///
+    ///   -1  EC_NOFRAME — nothing returned at all within the receive timeout
+    ///    0  a frame returned but no slave had processed it
+    ///  1..n a frame returned having been processed by only some slaves, and
+    ///       the number says how far along the segment it got
     [[nodiscard]] int min_failed_wkc() const noexcept { return min_failed_wkc_; }
 
     /// Re-read every slave's actual EtherCAT state. Not real-time: this issues
@@ -323,7 +339,7 @@ private:
     int rx_timeout_us_ = 250;
     std::int64_t max_exchange_ns_ = 0;
     std::int64_t max_failed_exchange_ns_ = 0;
-    int min_failed_wkc_ = -1;
+    int min_failed_wkc_ = -2;
     std::uint64_t cycles_ = 0;
     std::uint64_t wkc_errors_ = 0;
     std::uint32_t consecutive_wkc_errors_ = 0;

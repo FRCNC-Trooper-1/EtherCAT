@@ -9,6 +9,11 @@ namespace frcnc::app {
 
 namespace fb = fieldbus;
 
+/// Cycles between OPERATIONAL polls. Each poll issues datagrams, and slaves
+/// take milliseconds to accept the transition, so polling every cycle is pure
+/// cost on the deadline.
+constexpr std::uint32_t kOpPollInterval = 50;
+
 const char* to_string(TaskState s) noexcept {
     switch (s) {
         case TaskState::Stopped:      return "Stopped";
@@ -214,6 +219,7 @@ void CyclicTask::run() noexcept {
     timer.start();
 
     std::uint32_t settle_cycles = 0;
+    bool requested_op = false;
     std::uint32_t shutdown_left = 0;
     bool operational = false;
     bool shutting_down = false;
@@ -236,14 +242,31 @@ void CyclicTask::run() noexcept {
         // precondition for OPERATIONAL that most bring-ups miss.
         if (!operational && !shutting_down) {
             const bool dc_ready = !bus_.dc_available() || bus_.dc().locked();
-            if (dc_ready) {
-                const fb::BusResult r = bus_.go_operational();
+            if (!requested_op && dc_ready) {
+                // REQUEST, do not wait. go_operational() waits up to
+                // state_timeout_us for the transition, and 200 ms inside a 1 ms
+                // loop is a two-hundred-cycle overrun -- which is exactly what
+                // it produced the first time a run got this far.
+                const fb::BusResult r = bus_.request_operational();
                 if (r != fb::BusResult::Ok) {
                     fail(fb::to_string(r));
                     break;
                 }
-                operational = true;
-                state_.store(TaskState::Running, std::memory_order_release);
+                requested_op = true;
+                settle_cycles = 0;
+            } else if (requested_op) {
+                // Polling costs datagrams, so do it every so often rather than
+                // every cycle. Slaves take milliseconds to accept OP.
+                if (++settle_cycles % kOpPollInterval == 0) {
+                    if (bus_.poll_operational()) {
+                        operational = true;
+                        state_.store(TaskState::Running, std::memory_order_release);
+                    } else if (cfg_.dc_lock_timeout_cycles != 0 &&
+                               settle_cycles > cfg_.dc_lock_timeout_cycles) {
+                        fail("slaves did not reach OPERATIONAL");
+                        break;
+                    }
+                }
             } else if (cfg_.dc_lock_timeout_cycles != 0 &&
                        ++settle_cycles > cfg_.dc_lock_timeout_cycles) {
                 fail("distributed clocks did not lock");

@@ -342,7 +342,7 @@ ExchangeStatus Bus::exchange() noexcept {
         if (st.exchange_ns > max_failed_exchange_ns_) {
             max_failed_exchange_ns_ = st.exchange_ns;
         }
-        if (min_failed_wkc_ < 0 || wkc < min_failed_wkc_) {
+        if (min_failed_wkc_ < -1 || wkc < min_failed_wkc_) {
             min_failed_wkc_ = wkc;
         }
         wkc_errors_++;
@@ -392,6 +392,39 @@ BusResult Bus::go_operational() noexcept {
 
     state_ = BusState::Operational;
     return BusResult::Ok;
+}
+
+BusResult Bus::request_operational() noexcept {
+    if (state_ != BusState::SafeOp) {
+        return BusResult::NotConfigured;
+    }
+    if (cycles_ == 0) {
+        return BusResult::OperationalFailed;
+    }
+    if (dc_available_ && !dc_.locked()) {
+        return BusResult::DcNotLocked;
+    }
+
+    // Write the request and return. The slaves take their own time to accept
+    // it; waiting here would block the caller's cycle for state_timeout_us,
+    // which at 200 ms against a 1 ms cycle is a two-hundred-cycle overrun.
+    ctx_.slavelist[0].state = EC_STATE_OPERATIONAL;
+    (void)ecx_writestate(&ctx_, 0);
+    return BusResult::Ok;
+}
+
+bool Bus::poll_operational() noexcept {
+    if (state_ == BusState::Operational) {
+        return true;
+    }
+    if (state_ != BusState::SafeOp) {
+        return false;
+    }
+    if ((ecx_readstate(&ctx_) & 0x0F) != EC_STATE_OPERATIONAL) {
+        return false;
+    }
+    state_ = BusState::Operational;
+    return true;
 }
 
 BusResult Bus::go_safe_operational() noexcept {

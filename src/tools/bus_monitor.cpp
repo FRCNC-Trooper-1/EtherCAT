@@ -344,8 +344,20 @@ int main(int argc, char** argv) {
     std::printf("  max exchange BAD  %.1f us   (rx timeout %d us)\n",
                 static_cast<double>(task->bus().max_failed_exchange_ns()) / 1000.0,
                 task->bus().rx_timeout_us());
-    std::printf("  worst bad wkc     %d of %d\n", task->bus().min_failed_wkc(),
-                s.expected_wkc);
+    {
+        const int bad_wkc = task->bus().min_failed_wkc();
+        const char* meaning = "";
+        if (bad_wkc == -2) {
+            meaning = "  (no failing cycle)";
+        } else if (bad_wkc < 0) {
+            meaning = "  (EC_NOFRAME: nothing came back)";
+        } else if (bad_wkc == 0) {
+            meaning = "  (returned, but no slave processed it)";
+        } else {
+            meaning = "  (died partway along the segment)";
+        }
+        std::printf("  worst bad wkc     %d of %d%s\n", bad_wkc, s.expected_wkc, meaning);
+    }
     std::printf("  reached OP        %s\n", reached_op ? "yes" : "NO");
     std::printf("  stayed in OP      %s\n", lost_op ? "NO -- dropped out" : "yes");
     if (!o.no_dc) {
