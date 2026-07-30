@@ -56,6 +56,30 @@ const char* to_string(BusState s) noexcept {
     return "?";
 }
 
+std::size_t list_interfaces(char* buffer, std::size_t capacity) noexcept {
+    if (buffer == nullptr || capacity == 0) {
+        return 0;
+    }
+    buffer[0] = '\0';
+
+    ec_adaptert* head = ec_find_adapters();
+    std::size_t written = 0;
+
+    for (ec_adaptert* a = head; a != nullptr; a = a->next) {
+        const int n = std::snprintf(buffer + written, capacity - written, "  %-16s %s\n",
+                                    a->name, a->desc);
+        if (n <= 0 || static_cast<std::size_t>(n) >= capacity - written) {
+            break;  // truncate rather than overrun
+        }
+        written += static_cast<std::size_t>(n);
+    }
+
+    if (head != nullptr) {
+        ec_free_adapters(head);
+    }
+    return written;
+}
+
 BusResult Bus::open(const BusConfig& cfg) noexcept {
     if (state_ != BusState::Closed) {
         return BusResult::AlreadyOpen;

@@ -110,7 +110,7 @@ The order matters. Each step depends on the previous one.
 
 ```c
 /* 1. Open the NIC. Nonzero return means success. */
-if (!ecx_init(&ctx, "enp3s0")) { /* fail */ }
+if (!ecx_init(&ctx, "<nic>")) { /* fail */ }
 
 /* 2. Enumerate. Returns the number of slaves found. */
 int nslaves = ecx_config_init(&ctx);
@@ -403,7 +403,7 @@ what you expect.
 SOEM's own sample is the first tool to reach for:
 
 ```bash
-./extern/soem/build/samples/slaveinfo/slaveinfo enp3s0 -sdo -map
+./extern/soem/build/samples/slaveinfo/slaveinfo <nic> -sdo -map
 ```
 
 It prints slave identity, state, PDO mapping, and the SDO object dictionary.

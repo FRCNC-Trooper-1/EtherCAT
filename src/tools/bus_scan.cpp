@@ -207,12 +207,21 @@ int main(int argc, char** argv) {
 
     BusResult r = bus->open(cfg);
     if (r != BusResult::Ok) {
+        std::fprintf(stderr, "FAILED to open '%s': %s\n", cfg.interface, to_string(r));
+
+        // Name it, don't make them guess. This failure looks like a permissions
+        // or driver problem and almost never is -- the interface is just called
+        // something else on this machine.
+        char adapters[2048];
+        if (list_interfaces(adapters, sizeof(adapters)) > 0) {
+            std::fprintf(stderr, "\nInterfaces this machine offers:\n%s", adapters);
+        }
         std::fprintf(stderr,
-                     "FAILED to open '%s': %s\n"
+                     "\n  - the name must match one above exactly\n"
                      "  - run as root (raw AF_PACKET socket)\n"
-                     "  - check the interface name: ip -br link\n"
-                     "  - the interface must be UP\n",
-                     cfg.interface, to_string(r));
+                     "  - the interface must be UP:  sudo ip link set %s up\n"
+                     "  - carrier is not required to open, but is to see slaves\n",
+                     cfg.interface);
         return 1;
     }
     std::printf("NIC opened OK — socket, permissions and driver path all work.\n\n");

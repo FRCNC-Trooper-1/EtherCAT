@@ -55,6 +55,16 @@ enum class BusResult : std::uint8_t {
 [[nodiscard]] const char* to_string(BusResult r) noexcept;
 [[nodiscard]] const char* to_string(BusState s) noexcept;
 
+/// List the network interfaces SOEM can bind to, newline-separated.
+///
+/// Exists because "InterfaceFailed" on its own sends people hunting for a
+/// permissions or driver problem when the real answer is almost always that the
+/// interface is named something else on this machine. Not real-time; call it
+/// only from a diagnostic path.
+///
+/// @return characters written, excluding the terminator.
+std::size_t list_interfaces(char* buffer, std::size_t capacity) noexcept;
+
 struct BusConfig {
     /// NIC name, e.g. "enp3s0". Must be a dedicated port with no IP stack.
     char interface[32] = {};

@@ -8,7 +8,7 @@
 // and it is the first time a mistake in scaling, direction or PDO offsets shows
 // up as something physical.
 //
-//   sudo ./build/axis_jog enp3s0 --counts-per-mm 10000 --distance 1 --feed 60
+//   sudo ./build/axis_jog <nic> --counts-per-mm 10000 --distance 1 --feed 60
 //
 // RUN IT WITH THE MOTOR OFF THE MACHINE FIRST. A wrong counts-per-mm is a
 // factor-of-anything error in how far the axis goes, and the first place it
@@ -295,6 +295,12 @@ int main(int argc, char** argv) {
     const fieldbus::BusResult r = task->start(cfg);
     if (r != fieldbus::BusResult::Ok) {
         std::printf("start failed: %s\n  %s\n", fieldbus::to_string(r), task->error());
+        if (r == fieldbus::BusResult::InterfaceFailed) {
+            char adapters[2048];
+            if (fieldbus::list_interfaces(adapters, sizeof(adapters)) > 0) {
+                std::printf("\nInterfaces this machine offers:\n%s", adapters);
+            }
+        }
         return 1;
     }
 

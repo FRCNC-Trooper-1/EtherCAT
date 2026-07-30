@@ -17,8 +17,8 @@
 // torque is ever commanded. That makes it safe to run against drives with no
 // motors attached, against a machine with the axes on hard stops, or overnight.
 //
-//   sudo ./build/bus_monitor enp3s0 --axes 3 --cycle 250 --duration 60
-//   sudo ./build/bus_monitor enp3s0 --axes 3 --cycle 250 --duration 86400
+//   sudo ./build/bus_monitor <nic> --axes 3 --cycle 250 --duration 60
+//   sudo ./build/bus_monitor <nic> --axes 3 --cycle 250 --duration 86400
 //
 // The second form is the 24-hour soak that docs/hardware-qualification calls
 // for. Run it before a machine ships.
@@ -214,6 +214,12 @@ int main(int argc, char** argv) {
     const fieldbus::BusResult r = task->start(cfg);
     if (r != fieldbus::BusResult::Ok) {
         std::printf("start failed: %s\n  %s\n", fieldbus::to_string(r), task->error());
+        if (r == fieldbus::BusResult::InterfaceFailed) {
+            char adapters[2048];
+            if (fieldbus::list_interfaces(adapters, sizeof(adapters)) > 0) {
+                std::printf("\nInterfaces this machine offers:\n%s", adapters);
+            }
+        }
         return 1;
     }
 

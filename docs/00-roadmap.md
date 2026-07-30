@@ -152,7 +152,7 @@ moves one of them a measured distance under a jerk-limited profile, then reports
 what actually happened:
 
 ```
-sudo ./build/axis_jog enp3s0 --counts-per-mm 10000 --distance 1 --feed 60
+sudo ./build/axis_jog <nic> --counts-per-mm 10000 --distance 1 --feed 60
 ```
 
 It defaults to 1 mm at 60 mm/min and asks for confirmation before moving. Do the
