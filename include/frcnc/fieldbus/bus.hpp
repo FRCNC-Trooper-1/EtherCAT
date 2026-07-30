@@ -88,6 +88,22 @@ struct BusConfig {
     /// Timeout for each EtherCAT state transition, microseconds.
     int state_timeout_us = 200'000;
 
+    /// How long the cyclic exchange waits for the frame to come back, in
+    /// microseconds. 0 derives it from the cycle time.
+    ///
+    /// This MUST be well under the cycle period. SOEM's own default,
+    /// EC_TIMEOUTRET, is 2000 us — twice a 1 ms cycle and eight times a 250 us
+    /// one. Using it means a single lost frame stalls the loop past its
+    /// deadline and into the following cycles, so one dropped frame becomes a
+    /// burst of overruns, the DC phase is kicked every time, and the drift
+    /// controller can never accumulate a run of good cycles to lock on.
+    ///
+    /// A frame that has not returned in a fraction of the cycle is lost.
+    /// Waiting longer does not recover it; it only damages the next cycle.
+    /// Round trip on a small segment is tens of microseconds, so a quarter of
+    /// the cycle is generous.
+    int rx_timeout_us = 0;
+
     /// Mailbox transfers drained per cycle, and — as the same decision — whether
     /// CoE slaves are registered for cyclic mailbox handling at all.
     ///
@@ -194,6 +210,9 @@ public:
     /// access from another thread works while the bus is in OP.
     [[nodiscard]] bool cyclic_mailbox() const noexcept { return cyclic_mailbox_; }
 
+    /// Resolved receive timeout actually in use, microseconds.
+    [[nodiscard]] int rx_timeout_us() const noexcept { return rx_timeout_us_; }
+
     /// Re-read every slave's actual EtherCAT state. Not real-time: this issues
     /// datagrams outside the cyclic exchange.
     [[nodiscard]] int read_lowest_state() noexcept;
@@ -242,6 +261,7 @@ private:
     bool cyclic_mailbox_ = false;
 
     int expected_wkc_ = 0;
+    int rx_timeout_us_ = 250;
     std::uint64_t cycles_ = 0;
     std::uint64_t wkc_errors_ = 0;
     std::uint32_t consecutive_wkc_errors_ = 0;

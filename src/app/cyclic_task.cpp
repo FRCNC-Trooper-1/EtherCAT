@@ -204,7 +204,10 @@ void CyclicTask::run() noexcept {
     // scheduling will pass every bench test and fault under load.
     const std::string rt_error = rt::configure_current_thread(cfg_.rt);
     if (!rt_error.empty()) {
-        std::snprintf(error_, sizeof(error_), "not real-time: %s", rt_error.c_str());
+        // Its own field, not error_. A later failure would overwrite that one,
+        // and "the loop was never real-time" is the fact that explains all the
+        // others.
+        std::snprintf(rt_status_, sizeof(rt_status_), "%s", rt_error.c_str());
     }
 
     rt::CycleTimer timer(cfg_.bus.cycle_ns, cfg_.overrun_threshold_ns);

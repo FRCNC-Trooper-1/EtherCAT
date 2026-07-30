@@ -85,6 +85,12 @@ public:
     /// Consecutive in-tolerance cycles so far.
     [[nodiscard]] std::uint32_t lock_run() const noexcept { return in_tolerance_run_; }
 
+    /// Longest run of in-tolerance cycles ever achieved. When lock never
+    /// happens this says whether the controller was close or nowhere near --
+    /// a peak of 90 against a requirement of 100 is a different problem from a
+    /// peak of 3.
+    [[nodiscard]] std::uint32_t peak_lock_run() const noexcept { return peak_lock_run_; }
+
     void reset() noexcept;
 
 private:
@@ -96,6 +102,7 @@ private:
     std::int64_t correction_ns_ = 0;
     std::uint64_t cycles_ = 0;
     std::uint32_t in_tolerance_run_ = 0;
+    std::uint32_t peak_lock_run_ = 0;
 };
 
 /// Phase error of `dc_time` relative to the cycle, folded into

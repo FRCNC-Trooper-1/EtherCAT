@@ -311,8 +311,29 @@ void test_latest_value_no_torn_reads_under_contention() {
     std::atomic<int> accepted{0};
     std::atomic<int> retried{0};
 
+    // Publish one sample BEFORE either thread starts.
+    //
+    // Without this the reader can win the race and observe the pristine
+    // all-zero buffer. That is a perfectly consistent snapshot -- the seqlock
+    // did its job -- but it is one no writer produced, so the invariant below
+    // (axis[a] == cycle + a, which needs 0, 1, 2) does not hold against it and
+    // the read is miscounted as torn. Cost a while to find: it reproduced about
+    // once in fifteen runs and looked exactly like a memory-ordering bug.
+    {
+        MachineStatus seed;
+        seed.cycle = 1;
+        seed.setpoint_sequence = 2;
+        seed.working_counter = 1;
+        seed.path_velocity = 1.0;
+        for (int a = 0; a < kMaxAxes; a++) {
+            seed.axis[a].position_actual = 1.0 + a;
+            seed.axis[a].position_command = 1.0 + a;
+        }
+        ch->store(seed);
+    }
+
     std::thread writer([&] {
-        std::uint64_t n = 1;
+        std::uint64_t n = 2;
         while (!stop.load(std::memory_order_relaxed)) {
             MachineStatus s;
             s.cycle = n;

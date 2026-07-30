@@ -87,6 +87,21 @@ BusResult Bus::open(const BusConfig& cfg) noexcept {
 
     cfg_ = cfg;
 
+    // Resolve the receive timeout once. A quarter of the cycle, floored at
+    // 50 us so a very short cycle does not time out before the wire can
+    // physically answer, and capped so it can never exceed the cycle itself.
+    rx_timeout_us_ = cfg_.rx_timeout_us;
+    if (rx_timeout_us_ <= 0) {
+        rx_timeout_us_ = static_cast<int>(cfg_.cycle_ns / 4000);
+        if (rx_timeout_us_ < 50) {
+            rx_timeout_us_ = 50;
+        }
+    }
+    const int cycle_us = static_cast<int>(cfg_.cycle_ns / 1000);
+    if (cycle_us > 0 && rx_timeout_us_ >= cycle_us) {
+        rx_timeout_us_ = cycle_us - 1;
+    }
+
     // ecx_init does NOT zero the context; static storage is zero-initialised,
     // but this object may be heap-allocated.
     std::memset(&ctx_, 0, sizeof(ctx_));
@@ -298,7 +313,7 @@ ExchangeStatus Bus::exchange() noexcept {
     }
 
     (void)ecx_send_processdata(&ctx_);
-    const int wkc = ecx_receive_processdata(&ctx_, EC_TIMEOUTRET);
+    const int wkc = ecx_receive_processdata(&ctx_, rx_timeout_us_);
 
     // Drain queued mailbox traffic. Required in v2 so SDO access stays possible
     // while the bus is in OP.

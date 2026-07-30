@@ -156,8 +156,20 @@ private:
 ///
 /// NOTE: the payload copy races with the writer by construction; the sequence
 /// check is what makes a torn read detectable rather than impossible. This is
-/// the standard seqlock trade and is why the payload must be trivially
-/// copyable and read through memcpy rather than field by field.
+/// the standard seqlock trade and is why the payload must be trivially copyable
+/// and copied as bytes rather than field by field.
+///
+/// The copy goes through `volatile`. A plain memcpy of a non-atomic member is a
+/// data race, which is formally undefined behaviour, and an optimiser entitled
+/// to assume nothing else writes `storage_` would be within its rights to cache
+/// or re-order part of the copy across the second sequence check — at which
+/// point a torn snapshot passes the check and is returned as valid. `volatile`
+/// forces each chunk to be a real access at the point it is written, which is
+/// what the sequence check assumes. This is the same reason the Linux kernel
+/// reads seqlock payloads through READ_ONCE.
+///
+/// No such miscompilation has been observed here; this is hardening against a
+/// standing entitlement of the optimiser, not a fix for a measured failure.
 template <typename T>
 class LatestValue {
     static_assert(std::is_trivially_copyable_v<T>,
@@ -172,7 +184,7 @@ public:
         seq_.store(seq + 1, std::memory_order_relaxed);
         std::atomic_thread_fence(std::memory_order_release);
 
-        std::memcpy(&storage_, &value, sizeof(T));
+        copy_volatile(storage_, reinterpret_cast<const std::uint8_t*>(&value));
 
         std::atomic_thread_fence(std::memory_order_release);
         seq_.store(seq + 2, std::memory_order_relaxed);
@@ -191,7 +203,7 @@ public:
             }
 
             std::atomic_thread_fence(std::memory_order_acquire);
-            std::memcpy(&out, &storage_, sizeof(T));
+            copy_volatile(reinterpret_cast<std::uint8_t*>(&out), storage_);
             std::atomic_thread_fence(std::memory_order_acquire);
 
             if (seq_.load(std::memory_order_relaxed) == before) {
@@ -207,8 +219,28 @@ public:
     }
 
 private:
+    /// Byte copy that the optimiser must actually perform, in order, at the
+    /// point it is written. Eight bytes at a time so a ~250-byte status payload
+    /// costs tens of nanoseconds rather than hundreds — this runs in the cyclic
+    /// path on the writer side.
+    static void copy_volatile(volatile std::uint8_t* dst,
+                              const volatile std::uint8_t* src) noexcept {
+        std::size_t i = 0;
+        for (; i + sizeof(std::uint64_t) <= sizeof(T); i += sizeof(std::uint64_t)) {
+            *reinterpret_cast<volatile std::uint64_t*>(dst + i) =
+                *reinterpret_cast<const volatile std::uint64_t*>(src + i);
+        }
+        for (; i < sizeof(T); i++) {
+            dst[i] = src[i];
+        }
+    }
+
     alignas(kCacheLine) std::atomic<std::uint64_t> seq_{0};
-    alignas(kCacheLine) T storage_{};
+
+    // Raw bytes, not a T. A volatile T member would infect every use, and the
+    // payload is only ever touched through copy_volatile anyway. alignas(8) on
+    // top of the cache-line alignment keeps the 64-bit chunked copy aligned.
+    alignas(kCacheLine) std::uint8_t storage_[sizeof(T)] = {};
 };
 
 }  // namespace frcnc::ipc

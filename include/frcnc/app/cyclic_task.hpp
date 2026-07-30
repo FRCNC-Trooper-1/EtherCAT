@@ -109,6 +109,13 @@ public:
     /// thread has exited.
     [[nodiscard]] const char* error() const noexcept { return error_; }
 
+    /// Why real-time scheduling could not be established, or an empty string if
+    /// it was. Kept apart from error() deliberately: a loop that silently ran
+    /// without SCHED_FIFO explains every timing symptom downstream, and losing
+    /// that to a later, more visible failure is how people chase the wrong bug.
+    [[nodiscard]] const char* rt_status() const noexcept { return rt_status_; }
+    [[nodiscard]] bool is_realtime() const noexcept { return rt_status_[0] == '\0'; }
+
     // --- channels shared with the planner ---
 
     [[nodiscard]] ipc::SetpointQueue& setpoints() noexcept { return setpoints_; }
@@ -155,6 +162,7 @@ private:
     std::atomic<bool> stop_requested_{false};
 
     char error_[192] = {};
+    char rt_status_[192] = {};
 };
 
 }  // namespace frcnc::app

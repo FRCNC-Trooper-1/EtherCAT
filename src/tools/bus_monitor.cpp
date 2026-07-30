@@ -223,8 +223,9 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    std::printf("%d slaves found. Waiting for DC lock and OPERATIONAL...\n\n",
-                task->bus().slave_count());
+    std::printf("%d slaves found, rx timeout %d us.\n", task->bus().slave_count(),
+                task->bus().rx_timeout_us());
+    std::printf("Waiting for DC lock and OPERATIONAL...\n\n");
 
     // --- run ----------------------------------------------------------------
 
@@ -305,7 +306,13 @@ int main(int argc, char** argv) {
     if (!o.no_dc) {
         std::printf("  DC locked         %s\n", s.dc_locked ? "yes" : "NO");
         std::printf("  DC peak error     %+" PRId64 " ns\n", dc_peak);
+        std::printf("  DC best lock run  %u cycles in tolerance\n",
+                    task->bus().dc().peak_lock_run());
     }
+    // Reported separately and always: a loop that quietly ran without
+    // SCHED_FIFO explains every timing number above it.
+    std::printf("  real-time         %s\n",
+                task->is_realtime() ? "yes" : task->rt_status());
     if (have_stats) {
         std::printf("  jitter max        %.1f us\n",
                     static_cast<double>(stats.max_jitter_ns) / 1000.0);
