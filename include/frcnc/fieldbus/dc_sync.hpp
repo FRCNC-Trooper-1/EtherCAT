@@ -44,8 +44,20 @@ struct DcSyncConfig {
     /// cannot produce a large sleep adjustment.
     std::int64_t max_correction_ns = 100'000;
 
-    /// Phase error considered "in lock".
-    std::int64_t lock_tolerance_ns = 1'000;
+    /// Phase error considered "in lock". 0 derives it from the cycle.
+    ///
+    /// This CANNOT sensibly be a constant across cycle times. Clock rate error
+    /// between master and reference slave accumulates in TIME, so four times the
+    /// cycle means four times the phase drift between corrections and roughly
+    /// four times the residual ripple. Measured on a real segment: a few hundred
+    /// nanoseconds of error at 1 ms became 1-4 us at 4 ms, with the frame loss
+    /// twelve times LOWER -- so a fixed 1 us tolerance that is nearly achievable
+    /// at 1 ms is simply unreachable at 4 ms, and the failure looks like a bus
+    /// problem rather than a badly posed threshold.
+    ///
+    /// Derived default is cycle/1000 with a 1 us floor: 1 us at 250 us and 1 ms,
+    /// 4 us at 4 ms. Set explicitly to override.
+    std::int64_t lock_tolerance_ns = 0;
 
     /// Consecutive in-tolerance cycles required before locked() reports true.
     std::uint32_t lock_cycles = 100;

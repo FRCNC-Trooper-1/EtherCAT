@@ -433,7 +433,60 @@ void test_zero_cycle_config_is_safe() {
 
 }  // namespace
 
+void test_dc_lock_tolerance_scales_with_the_cycle() {
+    // A constant tolerance is wrong across cycle times: the drift to be
+    // rejected between corrections is proportional to the cycle, so the
+    // residual ripple is too. Measured on hardware -- a few hundred ns of error
+    // at 1 ms became 1-4 us at 4 ms with TWELVE TIMES less frame loss, so the
+    // fixed 1 us threshold made a healthier bus look like a failing one.
+    struct Case {
+        std::int64_t cycle_ns;
+        std::int64_t expect_tolerance_ns;
+    };
+    const Case cases[] = {
+        {250'000, 1'000},    // floor applies
+        {1'000'000, 1'000},  // floor applies
+        {4'000'000, 4'000},  // scales
+        {8'000'000, 8'000},
+    };
+
+    for (const Case& c : cases) {
+        DcSyncConfig cfg;
+        cfg.cycle_ns = c.cycle_ns;
+        cfg.lock_tolerance_ns = 0;  // derive
+        cfg.lock_cycles = 1;
+
+        DcSync dc;
+        dc.configure(cfg);
+
+        // Just inside tolerance locks; just outside does not.
+        const std::int64_t inside = c.expect_tolerance_ns - 1;
+        (void)dc.update(cfg.shift_ns + inside);
+        CHECK(dc.locked());
+
+        DcSync dc2;
+        dc2.configure(cfg);
+        const std::int64_t outside = c.expect_tolerance_ns + 1;
+        (void)dc2.update(cfg.shift_ns + outside);
+        CHECK(!dc2.locked());
+    }
+}
+
+void test_dc_explicit_lock_tolerance_is_honoured() {
+    DcSyncConfig cfg;
+    cfg.cycle_ns = 4'000'000;
+    cfg.lock_tolerance_ns = 500;  // pinned, must not be widened to 4000
+    cfg.lock_cycles = 1;
+
+    DcSync dc;
+    dc.configure(cfg);
+    (void)dc.update(cfg.shift_ns + 600);
+    CHECK(!dc.locked());
+}
+
 int main() {
+    test_dc_lock_tolerance_scales_with_the_cycle();
+    test_dc_explicit_lock_tolerance_is_honoured();
     std::printf("test_fieldbus\n");
 
     test_decode_mapping_entry();
