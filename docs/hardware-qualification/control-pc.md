@@ -115,6 +115,43 @@ The soak test that matters now is at the system level, not the timing level:
 jitter with no fieldbus traffic is a floor, not a prediction, and the NIC is the
 component most likely to move it.
 
+### NIC disqualification — Realtek r8169
+
+**Measured, on this machine, against two Yaskawa Sigma-X drives.** The onboard
+Realtek cannot carry an EtherCAT segment and the numbers say so unambiguously.
+
+| Cycle | Frames/s | Working-counter errors | Loss rate | Lost frames/s |
+|---|---|---|---|---|
+| 1 ms | 1000 | 5588 in 250,000 | **2.24 %** | 22.4 |
+| 4 ms | 250 | 29 in 15,000 | **0.19 %** | 0.48 |
+
+A four-times slower cycle gave a **twelve-times lower loss rate**, and
+forty-six times fewer losses per second. That superlinearity is the finding: the
+frames are not being lost at random, the NIC is failing to service the receive
+path at rate. Extrapolating the wrong way, 250 µs on this part is not marginal,
+it is impossible.
+
+Everything else was ruled out first, which is why this is a disqualification and
+not a guess:
+
+- **Not the host timing.** Mean jitter 3.9 µs, max 14.2 µs, zero overruns,
+  `real-time: yes`, worst loop 298 µs against a 1000 µs budget.
+- **Not the cabling.** Every slave's ESC error registers
+  (`invalid_frame`, `rx_error`, `lost_link`) read zero for the whole run. No
+  device ever detected damage on the wire, and the link never dropped.
+- **Not a frame dying partway along the segment.** Worst working counter on a
+  failing cycle was `EC_NOFRAME`: nothing came back at all.
+- **Not the receive timeout.** The worst bad exchange sat exactly at the
+  timeout, so the frames were absent rather than late.
+
+The small forwarded-RX-error counts that do appear (26 over 250,000 cycles) are
+the same fault, not a second one: no port ever *detected* damage, so those
+frames arrived already flagged, having been damaged before they reached drive 1.
+
+**Consequence for the product:** an Intel i210/i211 is a requirement of the bill
+of materials, not a preference. Any board considered for a shipped machine must
+be qualified with this test before it is committed to.
+
 ### Caveats
 
 1. **The NIC is the weak point.** `r8169` does not support interrupt coalescing
