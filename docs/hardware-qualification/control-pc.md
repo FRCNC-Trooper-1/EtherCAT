@@ -115,7 +115,7 @@ The soak test that matters now is at the system level, not the timing level:
 jitter with no fieldbus traffic is a floor, not a prediction, and the NIC is the
 component most likely to move it.
 
-### Distributed Clocks — validated on hardware
+### Distributed Clocks — chain validated, acceptance pending
 
 **DC acquires lock, and the bus reaches OPERATIONAL because of it.** Confirmed
 against two Sigma-X drives at a 4 ms cycle: lock acquired at ~5 s, `OPERATIONAL`
@@ -135,10 +135,22 @@ That is not by itself a fault, and the distinction matters:
   in the *master's* cycle phase costs nothing provided the frame still arrives
   before Sync0 fires.
 
-So the number to judge against is the **Sync0 shift** (cycle/4 by default —
-1 ms at a 4 ms cycle), not the lock tolerance. A 12 µs excursion against a 1 ms
-margin is 1.2 % of the budget. Excursions approaching the shift are the real
-fault, and none were seen.
+The margin was never close: a 12 µs excursion against a 1 ms Sync0 shift spends
+1.2 % of the budget.
+
+**That is not the acceptance criterion, however.** For a shipped machine the
+requirement is *sustained* lock, not merely acquired:
+
+> **DC must acquire lock and hold it continuously for the whole soak run.**
+
+A bus that locks and then repeatedly drops out is not a bus anyone should put a
+tool into, even when each individual excursion is harmless. The excursions here
+track host jitter spikes and frame loss, both of which come from the NIC — so
+this criterion is expected to be met once the Realtek is replaced, and this
+record stays open until it is demonstrated rather than argued.
+
+**Status: DC chain validated, acceptance NOT granted.** Re-run against the
+Intel NIC before signing off.
 
 ### NIC disqualification — Realtek r8169
 
