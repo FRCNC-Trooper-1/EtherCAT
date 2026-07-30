@@ -17,8 +17,8 @@
 // torque is ever commanded. That makes it safe to run against drives with no
 // motors attached, against a machine with the axes on hard stops, or overnight.
 //
-//   sudo ./build/bus_monitor <nic> --axes 3 --cycle 250 --duration 60
-//   sudo ./build/bus_monitor <nic> --axes 3 --cycle 250 --duration 86400
+//   sudo ./build/bus_monitor ethX --axes 3 --cycle 250 --duration 60
+//   sudo ./build/bus_monitor ethX --axes 3 --cycle 250 --duration 86400
 //
 // The second form is the 24-hour soak that docs/hardware-qualification calls
 // for. Run it before a machine ships.

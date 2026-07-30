@@ -8,7 +8,7 @@
 // and it is the first time a mistake in scaling, direction or PDO offsets shows
 // up as something physical.
 //
-//   sudo ./build/axis_jog <nic> --counts-per-mm 10000 --distance 1 --feed 60
+//   sudo ./build/axis_jog ethX --counts-per-mm 10000 --distance 1 --feed 60
 //
 // RUN IT WITH THE MOTOR OFF THE MACHINE FIRST. A wrong counts-per-mm is a
 // factor-of-anything error in how far the axis goes, and the first place it

@@ -331,7 +331,7 @@ done
 
 # Then pin the EtherCAT NIC IRQ to CPU 1 (mask 0x2), adjacent to but not on
 # the isolated control core.
-ETH=<nic>     # <-- your dedicated EtherCAT interface
+ETH=ethX     # <-- your dedicated EtherCAT interface
 for irq in $(grep -E "${ETH}" /proc/interrupts | awk -F: '{print $1}' | tr -d ' '); do
     echo 2 | sudo tee "/proc/irq/${irq}/smp_affinity" >/dev/null
 done
@@ -350,7 +350,7 @@ Every offload and coalescing feature exists to raise throughput by adding
 latency. For EtherCAT you want the opposite trade in every case.
 
 ```bash
-ETH=<nic>
+ETH=ethX
 
 # Disable interrupt coalescing — we want the frame the instant it lands.
 sudo ethtool -C "$ETH" rx-usecs 0 tx-usecs 0 rx-frames 1 tx-frames 1 adaptive-rx off adaptive-tx off

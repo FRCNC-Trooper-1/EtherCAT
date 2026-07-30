@@ -433,7 +433,7 @@ fi
 section "8. EtherCAT network interface"
 
 if [[ -z "$ETH" ]]; then
-    warn "No interface given — pass one, e.g. ./scripts/check-realtime.sh <nic>"
+    warn "No interface given — pass one, e.g. ./scripts/check-realtime.sh ethX"
     info "Candidates:"
     for d in /sys/class/net/*; do
         n=$(basename "$d")
