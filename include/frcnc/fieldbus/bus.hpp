@@ -88,8 +88,16 @@ struct BusConfig {
     /// Timeout for each EtherCAT state transition, microseconds.
     int state_timeout_us = 200'000;
 
-    /// Mailbox transfers drained per cycle. Required in SOEM v2 for SDO access
-    /// while the bus is in OP.
+    /// Mailbox transfers drained per cycle, and — as the same decision — whether
+    /// CoE slaves are registered for cyclic mailbox handling at all.
+    ///
+    /// In SOEM v2 a slave marked cyclic has its mailbox served by
+    /// ecx_mbxhandler, which only runs inside exchange(). That is what makes SDO
+    /// access work from a non-real-time thread while the bus is in OP. It also
+    /// means a caller that never cycles must leave this at 0: otherwise every
+    /// SDO blocks waiting for a handler that is never called.
+    ///
+    /// Cycling (CyclicTask): leave it at 4. Scanning only (bus_scan): set 0.
     int mailbox_per_cycle = 4;
 
     DcSyncConfig dc{};
@@ -182,6 +190,10 @@ public:
     [[nodiscard]] int expected_wkc() const noexcept { return expected_wkc_; }
     [[nodiscard]] int iomap_size() const noexcept { return iomap_size_; }
 
+    /// True when at least one slave's mailbox is served cyclically, i.e. SDO
+    /// access from another thread works while the bus is in OP.
+    [[nodiscard]] bool cyclic_mailbox() const noexcept { return cyclic_mailbox_; }
+
     /// Re-read every slave's actual EtherCAT state. Not real-time: this issues
     /// datagrams outside the cyclic exchange.
     [[nodiscard]] int read_lowest_state() noexcept;
@@ -227,6 +239,7 @@ private:
 
     DcSync dc_{};
     bool dc_available_ = false;
+    bool cyclic_mailbox_ = false;
 
     int expected_wkc_ = 0;
     std::uint64_t cycles_ = 0;

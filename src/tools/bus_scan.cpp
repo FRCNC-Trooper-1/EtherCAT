@@ -260,6 +260,11 @@ int main(int argc, char** argv) {
     cfg.cycle_ns = 1'000'000;
     cfg.use_dc = true;
     cfg.force_block_lrw = false;
+
+    // This tool never runs a cyclic exchange, so nothing would ever service a
+    // cyclic mailbox queue. Leaving it on would make every SDO read here block
+    // until timeout -- including the diagnostics this tool exists to print.
+    cfg.mailbox_per_cycle = 0;
     bool shift_given = false;
 
     for (int i = 2; i < argc; i++) {
