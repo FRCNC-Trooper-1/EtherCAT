@@ -58,9 +58,14 @@ struct CyclicTaskConfig {
     /// Jitter above this counts as an overrun in the cycle statistics.
     std::int64_t overrun_threshold_ns = 100'000;
 
-    /// Cycles allowed for the DC drift controller to lock before giving up.
-    /// 5000 is five seconds at 1 ms, and twenty at 250 us.
-    std::uint32_t dc_lock_timeout_cycles = 5000;
+    /// Wall time allowed for the DC drift controller to lock before giving up.
+    ///
+    /// In MILLISECONDS, not cycles. A cycle count shortens the allowance
+    /// exactly when the cycle gets shorter and the controller has no less
+    /// settling to do: 5000 cycles is 5 s at 1 ms but 1.25 s at 250 us, so the
+    /// design cycle got a quarter of the patience of the fallback one and
+    /// timed out mid-pull-in.
+    std::uint32_t dc_lock_timeout_ms = 10'000;
 
     /// Refuse to start if a drive does not map 0x60B1.
     ///

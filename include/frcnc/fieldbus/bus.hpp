@@ -102,6 +102,12 @@ struct BusConfig {
     /// Waiting longer does not recover it; it only damages the next cycle.
     /// Round trip on a small segment is tens of microseconds, so a quarter of
     /// the cycle is generous.
+    ///
+    /// NOTE: SOEM waits in ppoll with a 50 us step, so the effective resolution
+    /// is 50 us regardless of what is asked for. At a 250 us cycle the derived
+    /// 62 us timeout therefore costs up to ~100 us of waiting, and the whole
+    /// exchange (send + wait + mailbox) can exceed the nominal figure. Measured:
+    /// a 62 us timeout produced a 115 us worst exchange. Budget accordingly.
     int rx_timeout_us = 0;
 
     /// Mailbox transfers drained per cycle, and — as the same decision — whether

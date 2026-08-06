@@ -220,6 +220,15 @@ void CyclicTask::run() noexcept {
 
     std::uint32_t settle_cycles = 0;
     bool requested_op = false;
+
+    // Convert the wall-clock allowance into cycles once, here, where the cycle
+    // period is known.
+    const std::uint32_t dc_timeout_cycles =
+        cfg_.dc_lock_timeout_ms == 0
+            ? 0
+            : static_cast<std::uint32_t>((static_cast<std::int64_t>(cfg_.dc_lock_timeout_ms) *
+                                          1'000'000LL) /
+                                         (cfg_.bus.cycle_ns > 0 ? cfg_.bus.cycle_ns : 1));
     std::uint32_t shutdown_left = 0;
     bool operational = false;
     bool shutting_down = false;
@@ -261,14 +270,12 @@ void CyclicTask::run() noexcept {
                     if (bus_.poll_operational()) {
                         operational = true;
                         state_.store(TaskState::Running, std::memory_order_release);
-                    } else if (cfg_.dc_lock_timeout_cycles != 0 &&
-                               settle_cycles > cfg_.dc_lock_timeout_cycles) {
+                    } else if (dc_timeout_cycles != 0 && settle_cycles > dc_timeout_cycles) {
                         fail("slaves did not reach OPERATIONAL");
                         break;
                     }
                 }
-            } else if (cfg_.dc_lock_timeout_cycles != 0 &&
-                       ++settle_cycles > cfg_.dc_lock_timeout_cycles) {
+            } else if (dc_timeout_cycles != 0 && ++settle_cycles > dc_timeout_cycles) {
                 fail("distributed clocks did not lock");
                 break;
             }

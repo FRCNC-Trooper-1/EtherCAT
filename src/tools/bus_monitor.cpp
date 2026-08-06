@@ -62,7 +62,7 @@ struct Options {
     long dc_tolerance_ns = 0;   ///< 0 keeps the DcSync default
     long dc_lock_cycles = 0;    ///< 0 keeps the DcSync default
     long rx_timeout_us = 0;     ///< 0 derives from the cycle
-    long dc_timeout_cycles = 0; ///< 0 keeps the CyclicTask default
+    long dc_timeout_ms = 0;     ///< 0 keeps the CyclicTask default
     bool block_lrw = false;
     bool no_dc = false;
 };
@@ -80,7 +80,7 @@ void usage() {
         "  --dc-tol N      DC phase error counted as in-lock, ns (default 1000)\n"
         "  --dc-lock N     consecutive in-tolerance cycles to declare lock (100)\n"
         "  --rx-timeout N  frame receive timeout, us (default: cycle/4)\n"
-        "  --dc-timeout N  cycles to wait for DC lock before failing (5000)\n"
+        "  --dc-timeout N  milliseconds to wait for DC lock before failing (10000)\n"
         "  --block-lrw     force LRD/LWR instead of LRW (Yaskawa Sigma-7)\n"
         "  --no-dc         run without distributed clocks (diagnostics only)\n"
         "\n"
@@ -161,7 +161,7 @@ bool parse_args(int argc, char** argv, Options& o) {
         } else if (std::strcmp(a, "--rx-timeout") == 0) {
             o.rx_timeout_us = n;
         } else if (std::strcmp(a, "--dc-timeout") == 0) {
-            o.dc_timeout_cycles = n;
+            o.dc_timeout_ms = n;
         } else {
             std::printf("unknown option %s\n", a);
             return false;
@@ -219,8 +219,8 @@ int main(int argc, char** argv) {
     if (o.dc_lock_cycles > 0) {
         cfg.bus.dc.lock_cycles = static_cast<std::uint32_t>(o.dc_lock_cycles);
     }
-    if (o.dc_timeout_cycles > 0) {
-        cfg.dc_lock_timeout_cycles = static_cast<std::uint32_t>(o.dc_timeout_cycles);
+    if (o.dc_timeout_ms > 0) {
+        cfg.dc_lock_timeout_ms = static_cast<std::uint32_t>(o.dc_timeout_ms);
     }
 
     cfg.rt.cpu = o.cpu;
@@ -473,9 +473,15 @@ int main(int argc, char** argv) {
         const double timeout_us = static_cast<double>(task->bus().rx_timeout_us());
         if (bad_us >= timeout_us * 0.9) {
             std::printf(
-                "  Frames are being LOST, not delayed: the worst bad cycle sat at\n"
+                "  Frames are being LOST, not delayed: the worst bad cycle ran to\n"
                 "  the receive timeout, meaning nothing came back at all. That is\n"
                 "  cabling, a port, or the NIC dropping frames.\n");
+            if (bad_us > timeout_us * 1.2) {
+                std::printf(
+                    "  (The figure exceeds the nominal timeout because SOEM waits in\n"
+                    "  50 us ppoll steps and the exchange also covers send and the\n"
+                    "  mailbox handler. Expected, not an overrun.)\n");
+            }
         } else {
             std::printf(
                 "  Frames are coming back LATE, not lost: the worst bad cycle\n"
