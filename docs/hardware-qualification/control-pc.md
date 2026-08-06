@@ -201,9 +201,12 @@ preference, because that is what the evidence supports — and because it means
 "a newer Realtek" is not a fix, which is the mistake this record exists to
 prevent someone repeating.
 
-One avenue remains untested on the RTL8126A: Realtek publish out-of-tree
-`r8125`/`r8126` drivers, and the newer chip may expose interrupt coalescing
-controls that `r8169` does not (`ethtool -c`). Worth ten minutes of curiosity;
+**There is no tuning lever left.** Interrupt coalescing was the most likely
+mechanism and cannot be reached: `ethtool -c` returns *Operation not supported*
+on **both** controllers, and the ring buffers are already at their 256-descriptor
+maximum. Offloads and flow control were disabled early and changed nothing.
+
+Realtek's out-of-tree `r8125`/`r8126` drivers remain untried. Worth curiosity;
 not worth building a product on. An out-of-tree vendor module that must be
 rebuilt against every kernel update is a liability on a machine expected to run
 for a decade.
