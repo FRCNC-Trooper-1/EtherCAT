@@ -152,21 +152,31 @@ record stays open until it is demonstrated rather than argued.
 **Status: DC chain validated, acceptance NOT granted.** Re-run against the
 Intel NIC before signing off.
 
-### NIC disqualification — Realtek r8169
+### DRIVER disqualification — `r8169`
 
-**Measured, on this machine, against two Yaskawa Sigma-X drives.** The onboard
-Realtek cannot carry an EtherCAT segment and the numbers say so unambiguously.
+**Not a chip fault. A driver fault.** Two different Realtek controllers, nine
+years and four generations apart, lose frames at the same rate through the same
+in-kernel driver:
 
-| Cycle | Frames/s | Working-counter errors | Loss rate | Lost frames/s |
+| Controller | Class | Cycle | Errors | Loss rate |
 |---|---|---|---|---|
-| 1 ms | 1000 | 5588 in 250,000 | **2.24 %** | 22.4 |
-| 4 ms | 250 | 29 in 15,000 | **0.19 %** | 0.48 |
+| RTL8168h (onboard) | 1 GbE, 2015 | 1 ms | 5588 / 250,000 | **2.24 %** |
+| **RTL8126A (add-in card)** | **5 GbE, 2024** | **1 ms** | **229 / 10,000** | **2.29 %** |
+| RTL8126A | 5 GbE | 250 µs | 842 / 40,000 | 2.11 % |
+| RTL8168h | 1 GbE | 4 ms | 29 / 15,000 | 0.19 % |
 
-A four-times slower cycle gave a **twelve-times lower loss rate**, and
-forty-six times fewer losses per second. That superlinearity is the finding: the
-frames are not being lost at random, the NIC is failing to service the receive
-path at rate. Extrapolating the wrong way, 250 µs on this part is not marginal,
-it is impossible.
+Replacing the silicon with a far newer part changed the loss rate by **2 %**.
+That rules out the chip: what both parts share is `r8169`, and that is where the
+frames are going. Both are usable at 4 ms and neither at 1 ms or below.
+
+The host is not implicated, and was measured rather than assumed:
+
+- **Timing is fine.** 3.5 µs mean jitter and 9.8 µs max at a **250 µs** cycle,
+  zero overruns, 128 µs worst loop against a 250 µs budget.
+- **The wire is fine.** Every slave's `invalid_frame`, `rx_error` and
+  `lost_link` counter read zero on every run, on both cards.
+- **The frames simply never return.** Worst working counter on a failing cycle
+  is `EC_NOFRAME` every time.
 
 Everything else was ruled out first, which is why this is a disqualification and
 not a guess:
@@ -185,9 +195,21 @@ The small forwarded-RX-error counts that do appear (26 over 250,000 cycles) are
 the same fault, not a second one: no port ever *detected* damage, so those
 frames arrived already flagged, having been damaged before they reached drive 1.
 
-**Consequence for the product:** an Intel i210/i211 is a requirement of the bill
-of materials, not a preference. Any board considered for a shipped machine must
-be qualified with this test before it is committed to.
+**Consequence for the product:** the BOM requirement is an Intel i210/i211 on
+the **`igb`** driver. Stated as a driver requirement rather than a brand
+preference, because that is what the evidence supports — and because it means
+"a newer Realtek" is not a fix, which is the mistake this record exists to
+prevent someone repeating.
+
+One avenue remains untested on the RTL8126A: Realtek publish out-of-tree
+`r8125`/`r8126` drivers, and the newer chip may expose interrupt coalescing
+controls that `r8169` does not (`ethtool -c`). Worth ten minutes of curiosity;
+not worth building a product on. An out-of-tree vendor module that must be
+rebuilt against every kernel update is a liability on a machine expected to run
+for a decade.
+
+Any board considered for a shipped machine must pass this test before it is
+committed to.
 
 ### Caveats
 
