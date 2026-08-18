@@ -610,13 +610,20 @@ bool PortErrors::clean() const noexcept {
     return total() == 0;
 }
 
-bool PortErrors::detected_error() const noexcept {
+bool PortErrors::detected_physical_error() const noexcept {
     for (int i = 0; i < 4; i++) {
         if (invalid_frame[i] != 0 || rx_error[i] != 0) {
             return true;
         }
     }
     return false;
+}
+
+bool PortErrors::detected_error() const noexcept {
+    // The processing unit belongs here. Leaving it out let a run where a slave
+    // counted 18 processing-unit errors be reported as "no port detected
+    // damage", which is true of the ports and false of the device.
+    return detected_physical_error() || processing_unit_error != 0;
 }
 
 bool PortErrors::forwarded_only() const noexcept {

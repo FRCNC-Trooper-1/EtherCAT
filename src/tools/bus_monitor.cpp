@@ -223,6 +223,7 @@ void print_pdo_map(const fieldbus::AxisPdoMap& m, int slave) {
     };
     const Named entries[] = {
         {"0x6060 mode", m.modes_of_operation.present()},
+        {"0x6072 max-trq", m.max_torque.present()},
         {"0x60B1 vel-ff", m.velocity_offset.present()},
         {"0x60B2 trq-ff", m.torque_offset.present()},
         {"0x6061 mode-disp", m.modes_display.present()},
@@ -238,6 +239,14 @@ void print_pdo_map(const fieldbus::AxisPdoMap& m, int slave) {
         std::printf("  %s %s", e.present ? "+" : "-", e.name);
     }
     std::printf("\n");
+
+    // Call this one out rather than leaving it in the row. A mapped 0x6072 is
+    // an OBLIGATION, not a feature: the master must write it every cycle or it
+    // commands a torque limit of zero.
+    if (m.max_torque.present()) {
+        std::printf("            0x6072 is mapped -- max torque is commanded from the\n"
+                    "            process image every cycle (AxisConfig::max_torque_per_mille)\n");
+    }
 }
 
 void print_axis_line(const ipc::MachineStatus& s, int i, int slave) {
@@ -448,7 +457,18 @@ int main(int argc, char** argv) {
         const bool ever = task->bus().dc().ever_locked();
         std::printf("  DC acquired lock  %s\n", ever ? "yes" : "NO");
         std::printf("  DC locked now     %s\n", s.dc_locked ? "yes" : "no");
-        std::printf("  DC peak error     %+" PRId64 " ns\n", dc_peak);
+        std::printf("  DC peak error     %+" PRId64 " ns  (includes pull-in)\n", dc_peak);
+        // The one to judge a running bus by. The combined peak is dominated by
+        // the initial hunt, which is the controller working rather than failing.
+        if (ever) {
+            const std::int64_t since = task->bus().dc().peak_error_since_lock_ns();
+            std::printf("  DC peak since lock%+" PRId64 " ns  (%.1f%% of the Sync0 shift)\n",
+                        since,
+                        cfg.bus.sync0_shift_ns != 0
+                            ? 100.0 * static_cast<double>(since) /
+                                  static_cast<double>(cfg.bus.sync0_shift_ns)
+                            : 0.0);
+        }
         std::printf("  DC best lock run  %u cycles in tolerance\n",
                     task->bus().dc().peak_lock_run());
         // The number that decides whether a frame still beats Sync0. Phase
@@ -484,7 +504,8 @@ int main(int argc, char** argv) {
     std::printf("\n--- slave-side error counters (this run) ---\n");
     bool all_clean = true;
     bool read_any = false;
-    bool any_detected = false;   ///< a port found damage itself
+    bool any_physical = false;   ///< a PORT found damage on the wire itself
+    bool any_pu = false;         ///< a PROCESSING UNIT rejected a frame it was handed
     bool any_forwarded = false;  ///< a port only passed on damage found elsewhere
     {
         auto& mutable_bus = const_cast<fieldbus::Bus&>(task->bus());
@@ -500,7 +521,8 @@ int main(int argc, char** argv) {
                 continue;
             }
             all_clean = false;
-            any_detected |= pe.detected_error();
+            any_physical |= pe.detected_physical_error();
+            any_pu |= pe.processing_unit_error != 0;
             any_forwarded |= pe.forwarded_only();
             std::printf("  slave %d: invalid=%u/%u/%u/%u  rxerr=%u/%u/%u/%u  "
                         "fwd=%u/%u/%u/%u  lostlink=%u/%u/%u/%u  pu=%u pdi=%u\n",
@@ -523,20 +545,38 @@ int main(int argc, char** argv) {
                 "  is the NIC or its driver, not cabling: fit an Intel i210/i211\n"
                 "  before tuning anything else.\n",
                 s.wkc_errors, task->bus().min_failed_wkc());
-        } else if (any_detected) {
+        } else if (any_physical) {
             std::printf(
-                "\n  A port DETECTED damage itself (invalid frames or RX errors), so\n"
-                "  the segment feeding that port is at fault -- cable, connector, or\n"
-                "  noise. Port 0 is the IN port; a count there on slave 1 means the\n"
-                "  run from the NIC.\n");
+                "\n  A port DETECTED damage on the wire itself (invalid frames or RX\n"
+                "  errors), so the segment feeding that port is at fault -- cable,\n"
+                "  connector, or noise. Port 0 is the IN port; a count there on\n"
+                "  slave 1 means the run from the NIC.\n");
+        } else if (any_pu) {
+            // Distinct from both of the above, and worth its own paragraph. The
+            // ports are the physical layer; the processing unit is the frame
+            // handed to it. A count here with every port clean means the wire
+            // was electrically fine and the FRAME was not.
+            std::printf(
+                "\n  No port found damage on the wire, but a slave's PROCESSING UNIT\n"
+                "  rejected frames (pu above). Those are different layers: the ports\n"
+                "  check the signal, the processing unit checks the frame it was\n"
+                "  handed. Clean ports plus a non-zero pu means the frame arrived\n"
+                "  electrically intact and malformed.\n"
+                "\n"
+                "  This is NOT a cabling verdict, and it is not yet a NIC verdict\n"
+                "  either. Re-run at the same cycle with the PDO assignment left\n"
+                "  alone (--rx-pdo 0x1601 --tx-pdo 0x1A01 on Yaskawa) and compare:\n"
+                "  if pu drops to zero with the shorter frame, the frame length is\n"
+                "  implicated; if it does not, this is the same transmit-side fault\n"
+                "  as the losses above.\n");
         } else if (any_forwarded) {
             std::printf(
-                "\n  No port detected damage: every non-zero counter is a FORWARDED\n"
-                "  error, meaning the frame arrived already flagged by something\n"
-                "  upstream. With the first slave's IN port clean too, the damage\n"
-                "  happened before the frame reached any drive -- so this is the\n"
-                "  master mangling frames on transmit, the same fault as the losses\n"
-                "  above, and not a cabling problem between the drives.\n");
+                "\n  No device found damage itself: every non-zero counter is a\n"
+                "  FORWARDED error, meaning the frame arrived already flagged by\n"
+                "  something upstream. With the first slave's IN port clean too, the\n"
+                "  damage happened before the frame reached any drive -- so this is\n"
+                "  the master mangling frames on transmit, the same fault as the\n"
+                "  losses above, and not a cabling problem between the drives.\n");
         }
     }
 

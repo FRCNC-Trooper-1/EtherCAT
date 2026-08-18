@@ -104,6 +104,12 @@ AxisOutputs AxisController::update(const AxisInputs& in, const AxisCommand& cmd)
     AxisOutputs out{};
     out.mode = static_cast<std::int8_t>(cfg_.mode);
 
+    // Unconditional, on every path out of this function including the faulted
+    // and disabled ones. A torque limit that is only written while things are
+    // going well is worse than none: it would go to zero at exactly the moment
+    // the axis is trying to decelerate under quick stop.
+    out.max_torque = cfg_.max_torque_per_mille;
+
     // --- read feedback ------------------------------------------------------
 
     if (in.pdo_valid) {

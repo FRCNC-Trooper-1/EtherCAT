@@ -183,6 +183,50 @@ feedforward therefore needs a *custom* mapping written into a spare object
 `0x60B1` is confirmed present in the object dictionary. Until then
 `CyclicTaskConfig::require_velocity_feedforward` must stay off.
 
+#### Result of the reassignment — MEASURED
+
+| | `0x1601`/`0x1A01` (default) | `0x1600`/`0x1A00` (assigned) |
+|---|---|---|
+| Process data | 6 out / 6 in | **18 out / 20 in** |
+| `0x6060` modes of operation | — | **✅** |
+| `0x6061` modes display | — | **✅** |
+| `0x60F4` following error | — | **✅** |
+| `0x6077` torque actual | — | **✅** |
+| `0x6072` max torque | — | **✅ — see the warning below** |
+| `0x60B1` velocity offset | — | — |
+| `0x606C` velocity actual | — | — |
+
+Sigma-X `0x1600`/`0x1A00` therefore mirror the Sigma-7 ESI exactly, including
+the trailing pad byte (17 mapped bytes reported as 18, 19 as 20).
+
+With `0x6060` mapped, `0x6061` came back as **8** — the first direct
+confirmation that the drives accept CSP from this master rather than an
+inference from the fact that nothing complained.
+
+### ⚠️ `0x1600` carries `0x6072` — a mapped max torque you MUST write
+
+The single hazard in taking the richer mapping, and it is not obvious, because
+it is a *new obligation* rather than a missing feature.
+
+`0x1600` includes **`0x6072` Max torque**. The process image starts zeroed, so a
+master that assigns this mapping and does not write that entry commands a torque
+limit of **zero**, on every cycle. The axis enables, reports `internal limit
+active` (statusword bit 11), and does not move — a fault that looks like a drive
+problem and is not one.
+
+Observed on the bench: with no motors attached the statusword read `0x0E08`,
+which is Fault + Remote + Target reached + **Internal limit active**. The fault
+bit is the expected A.C90 encoder alarm; bit 11 is this.
+
+`AxisConfig::max_torque_per_mille` handles it, defaulting to **1000** (100% of
+rated). That is conservative in both directions — it prevents the zero, and it
+*lowers* the limit relative to the several-times-rated the drive powers up with.
+`CyclicTask` refuses to start if `0x6072` is mapped and the value is 0, because
+once the object is in the RxPDO there is no such thing as leaving it alone.
+
+Its neighbours are harmless: `0x60FF` target velocity and `0x6071` target torque
+are ignored by the drive in CSP, so zero costs nothing.
+
 ### ✅ Cycle time and `0x60C2` — resolved for both generations
 
 **Supported DC cycles:**

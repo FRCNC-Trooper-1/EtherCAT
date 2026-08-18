@@ -58,6 +58,26 @@ struct AxisConfig {
 
     /// Mode to command. CSP for coordinated motion.
     drive::Mode mode = drive::Mode::CyclicSyncPosition;
+
+    /// 0x6072 max torque, per mille of rated torque, written every cycle
+    /// whenever the drive maps it.
+    ///
+    /// Defaults to 100% of rated rather than to zero or to the drive's own
+    /// power-on value, and the reason is a failure this project hit on the
+    /// bench: a richer PDO mapping (Yaskawa 0x1600) carries 0x6072, the
+    /// process image starts zeroed, and an unwritten entry is therefore a
+    /// commanded torque limit of ZERO. The axis enables, sets "internal limit
+    /// active", and refuses to move.
+    ///
+    /// 100% is the conservative default in the other direction too: Yaskawa
+    /// drives power up allowing several times rated torque, so writing this
+    /// LOWERS the limit. Raise it deliberately, per machine.
+    ///
+    /// There is no "leave the object alone" setting, because once 0x6072 is in
+    /// the RxPDO there is no such thing: the process image is what the drive
+    /// reads, every cycle, and not writing it means writing zero. CyclicTask
+    /// refuses to start on a mapped 0x6072 with this left at 0.
+    std::uint16_t max_torque_per_mille = 1000;
 };
 
 /// What the cyclic task read out of this axis's TxPDO.
@@ -78,6 +98,7 @@ struct AxisOutputs {
     std::int32_t target_counts = 0;
     std::int32_t velocity_offset = 0;  ///< 0x60B1, counts/s
     std::int16_t torque_offset = 0;    ///< 0x60B2, per mille of rated torque
+    std::uint16_t max_torque = 0;      ///< 0x6072, per mille; 0 means do not write
     std::int8_t mode = 0;
 };
 

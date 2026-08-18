@@ -77,8 +77,24 @@ public:
     /// Phase error from the last update. Zero means perfectly in phase.
     [[nodiscard]] std::int64_t error_ns() const noexcept { return error_ns_; }
 
-    /// Largest absolute phase error observed since reset.
+    /// Largest absolute phase error observed since reset, INCLUDING the initial
+    /// pull-in. Use peak_error_since_lock_ns() to judge a running bus.
     [[nodiscard]] std::int64_t peak_error_ns() const noexcept { return peak_error_ns_; }
+
+    /// Largest absolute phase error since lock was first achieved.
+    ///
+    /// The distinction is not cosmetic. Before lock the controller is hunting,
+    /// and a large excursion there is the pull-in doing its job; after lock it
+    /// is an excursion of a synchronised bus, which is the number that has to be
+    /// compared against the Sync0 shift. Reporting only the combined peak makes
+    /// a clean run look alarming — a 261 us pull-in transient and a 261 us
+    /// excursion twenty seconds into OPERATIONAL are the same number and
+    /// completely different findings.
+    ///
+    /// Zero until lock is first achieved.
+    [[nodiscard]] std::int64_t peak_error_since_lock_ns() const noexcept {
+        return peak_error_since_lock_ns_;
+    }
 
     /// Correction applied on the last update.
     [[nodiscard]] std::int64_t correction_ns() const noexcept { return correction_ns_; }
@@ -123,6 +139,7 @@ private:
     double integral_ = 0.0;
     std::int64_t error_ns_ = 0;
     std::int64_t peak_error_ns_ = 0;
+    std::int64_t peak_error_since_lock_ns_ = 0;
     std::int64_t correction_ns_ = 0;
     std::uint64_t cycles_ = 0;
     std::uint32_t in_tolerance_run_ = 0;

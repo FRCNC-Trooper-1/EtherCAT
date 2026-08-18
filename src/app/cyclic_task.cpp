@@ -86,6 +86,20 @@ fb::BusResult CyclicTask::start(const CyclicTaskConfig& cfg) {
             bus_.close();
             return fb::BusResult::MappingFailed;
         }
+        // A mapped 0x6072 that nobody writes is a commanded torque limit of
+        // zero, every cycle. Refuse rather than start: the axis would enable,
+        // report "internal limit active", and sit there — a fault mode that
+        // looks like a drive problem and is not one.
+        if (axis_[i].pdo.max_torque.present() &&
+            cfg_.machine.axis[i].max_torque_per_mille == 0) {
+            char msg[160];
+            std::snprintf(msg, sizeof(msg),
+                          "axis %d (slave %d): 0x6072 is mapped but max_torque_per_mille "
+                          "is 0, which commands ZERO torque", i, cfg_.axis_slave[i]);
+            fail(msg);
+            bus_.close();
+            return fb::BusResult::MappingFailed;
+        }
         if (cfg_.require_velocity_feedforward && !axis_[i].pdo.has_velocity_feedforward()) {
             char msg[128];
             std::snprintf(msg, sizeof(msg),
@@ -204,6 +218,11 @@ void CyclicTask::write_outputs(const MachineOutputs& out) noexcept {
         }
         if (b.pdo.torque_offset.present()) {
             fb::write_i16(b.outputs, b.pdo.torque_offset, o.torque_offset);
+        }
+        // Only when the drive maps it AND a limit was configured. Writing zero
+        // here is not "no limit", it is a limit of zero — see AxisPdoMap.
+        if (b.pdo.max_torque.present() && o.max_torque != 0) {
+            fb::write_u16(b.outputs, b.pdo.max_torque, o.max_torque);
         }
     }
 }

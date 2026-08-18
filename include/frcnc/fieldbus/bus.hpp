@@ -205,14 +205,27 @@ struct PortErrors {
     /// Total across every port, for a one-line verdict.
     [[nodiscard]] unsigned total() const noexcept;
 
-    /// Did any port DETECT a physical-layer error itself?
+    /// Did this device FIND a fault itself, rather than pass one along?
     ///
     /// This is the distinction that matters, and conflating it with the
     /// forwarded counters points the finger at the wrong component. A port only
     /// increments invalid_frame or rx_error for damage it found on the wire
     /// arriving at THAT port -- so a non-zero count here indicts the segment
     /// feeding it.
+    ///
+    /// processing_unit_error counts too, and originally did not, which made the
+    /// tooling report "no port detected damage" on a run where a slave had
+    /// counted 18. It is a different LAYER, not a different verdict: the ports
+    /// check the physical layer, the processing unit checks the frame it was
+    /// handed. Use detected_physical_error() when the wire specifically is the
+    /// question.
     [[nodiscard]] bool detected_error() const noexcept;
+
+    /// Did any PORT detect damage on the wire arriving at it?
+    ///
+    /// Narrower than detected_error(): this is the one that indicts cabling,
+    /// connectors or noise on a specific segment.
+    [[nodiscard]] bool detected_physical_error() const noexcept;
 
     /// Did this slave only ever pass on damage someone else had already marked?
     ///

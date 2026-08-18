@@ -13,6 +13,7 @@ constexpr std::uint16_t kModesDisplay = 0x6061;
 constexpr std::uint16_t kPositionActual = 0x6064;
 constexpr std::uint16_t kVelocityActual = 0x606C;
 constexpr std::uint16_t kTorqueActual = 0x6077;
+constexpr std::uint16_t kMaxTorque = 0x6072;
 constexpr std::uint16_t kTargetPosition = 0x607A;
 constexpr std::uint16_t kVelocityOffset = 0x60B1;
 constexpr std::uint16_t kTorqueOffset = 0x60B2;
@@ -106,6 +107,7 @@ void PdoMapBuilder::assign(std::uint16_t index, std::uint8_t subindex, std::uint
             case kModesOfOperation:   fill(map_.modes_of_operation, index, subindex, bit_length, byte_offset); break;
             case kVelocityOffset:     fill(map_.velocity_offset, index, subindex, bit_length, byte_offset); break;
             case kTorqueOffset:       fill(map_.torque_offset, index, subindex, bit_length, byte_offset); break;
+            case kMaxTorque:          fill(map_.max_torque, index, subindex, bit_length, byte_offset); break;
             case kTouchProbeFunction: fill(map_.touch_probe_function, index, subindex, bit_length, byte_offset); break;
             default: break;
         }

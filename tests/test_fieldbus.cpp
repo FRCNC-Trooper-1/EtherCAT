@@ -94,7 +94,7 @@ void test_full_yaskawa_mapping() {
     CHECK(b.add_raw(0x607A0020u));  // target position   @2,  4
     CHECK(b.add_raw(0x60FF0020u));  // target velocity   @6,  4  (not tracked)
     CHECK(b.add_raw(0x60710010u));  // target torque     @10, 2  (not tracked)
-    CHECK(b.add_raw(0x60720010u));  // max torque        @12, 2  (not tracked)
+    CHECK(b.add_raw(0x60720010u));  // max torque        @12, 2
     CHECK(b.add_raw(0x60600008u));  // modes of op       @14, 1
     CHECK(b.add_raw(0x60B80010u));  // touch probe fn    @15, 2
     b.end();
@@ -105,6 +105,30 @@ void test_full_yaskawa_mapping() {
     CHECK(m.modes_of_operation.byte_offset == 14);
     CHECK(m.touch_probe_function.byte_offset == 15);
     CHECK(m.rx_bytes == 17);
+
+    // 0x6072 must be LOCATED, because a mapped max torque left unwritten is a
+    // commanded torque limit of zero. The bench drives report 18 output bytes
+    // for this mapping rather than 17, so there is a trailing pad byte on real
+    // hardware -- which is exactly why the offsets are discovered and not
+    // assumed.
+    CHECK(m.max_torque.present());
+    CHECK(m.max_torque.byte_offset == 12);
+    CHECK(m.max_torque.bit_length == 16);
+}
+
+void test_minimal_mapping_does_not_locate_max_torque() {
+    // The drive's own default assignment (0x1601) does not carry 0x6072, so
+    // the entry must stay invalid rather than defaulting to offset 0 -- which
+    // would write the torque limit straight over the controlword.
+    PdoMapBuilder b;
+    b.begin(PdoDirection::Rx);
+    CHECK(b.add_raw(0x60400010u));
+    CHECK(b.add_raw(0x607A0020u));
+    b.end();
+
+    CHECK(!b.result().max_torque.present());
+    CHECK(b.result().controlword.byte_offset == 0);
+    CHECK(b.result().target_position.byte_offset == 2);
 }
 
 void test_padding_shifts_following_entries() {
@@ -585,6 +609,7 @@ int main() {
     test_decode_mapping_entry();
     test_minimal_csp_mapping();
     test_full_yaskawa_mapping();
+    test_minimal_mapping_does_not_locate_max_torque();
     test_padding_shifts_following_entries();
     test_feedforward_entries_are_located();
     test_missing_required_object_is_detected();

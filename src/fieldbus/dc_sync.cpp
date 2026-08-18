@@ -63,6 +63,7 @@ void DcSync::reset() noexcept {
     integral_ = 0.0;
     error_ns_ = 0;
     peak_error_ns_ = 0;
+    peak_error_since_lock_ns_ = 0;
     correction_ns_ = 0;
     cycles_ = 0;
     in_tolerance_run_ = 0;
@@ -80,6 +81,11 @@ std::int64_t DcSync::update(std::int64_t dc_time_ns) noexcept {
     const std::int64_t magnitude = abs_i64(error_ns_);
     if (magnitude > peak_error_ns_) {
         peak_error_ns_ = magnitude;
+    }
+    // Tracked from the cycle AFTER lock was first achieved, so the pull-in
+    // transient is excluded rather than dominating the figure for ever.
+    if (ever_locked_ && magnitude > peak_error_since_lock_ns_) {
+        peak_error_since_lock_ns_ = magnitude;
     }
 
     integral_ += static_cast<double>(error_ns_);

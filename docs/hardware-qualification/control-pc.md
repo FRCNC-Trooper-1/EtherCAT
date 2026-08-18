@@ -126,6 +126,14 @@ drift controller, and the gate that refuses OP until lock.
 Lock is **acquired but not continuously held** on this NIC. Phase excursions of
 8–12 µs appear during the run, correlated with host jitter spikes (max 15.5 µs).
 
+> A later run reported a **DC peak error of 261 µs**, which looks alarming and
+> was not comparable to the figures above: the peak was measured across the
+> whole run and so was dominated by the initial pull-in, where a large excursion
+> is the controller working rather than failing. `DcSync` now reports
+> `peak_error_since_lock_ns()` separately, and `bus_monitor` prints it as a
+> percentage of the Sync0 shift — the only ratio that decides whether a frame
+> still beats Sync0. Compare against that line, not against the combined peak.
+
 That is not by itself a fault, and the distinction matters:
 
 - **Acquiring** lock gates OPERATIONAL and must be strict. Requesting OP while
@@ -165,6 +173,7 @@ in-kernel driver:
 | **RTL8126A — card #2** | **5 GbE, 2024** | **1 ms** | **104 / 10,000** | **1.04 %** |
 | RTL8126A — card #1 | 5 GbE | 250 µs | 842 / 40,000 | 2.11 % |
 | RTL8168h | 1 GbE | 4 ms | 29 / 15,000 | 0.19 % |
+| RTL8168h — full PDO map | 1 GbE | 4 ms | 15 / 15,001 | 0.10 % |
 
 **Three physical cards, two chip generations, one driver.** Newer silicon changed
 nothing; a second sample of the same part halved the rate without approaching
@@ -218,6 +227,43 @@ not a guess:
 The small forwarded-RX-error counts that do appear (26 over 250,000 cycles) are
 the same fault, not a second one: no port ever *detected* damage, so those
 frames arrived already flagged, having been damaged before they reached drive 1.
+
+#### Open: processing-unit errors under the full PDO map
+
+Tripling the frame (6/6 → 18/20 bytes, `0x1600`/`0x1A00`) produced a counter
+that had not been read before:
+
+```
+slave 1: invalid=0/0/0/0  rxerr=0/0/0/0  fwd=0/18/0/0  lostlink=0/0/0/0  pu=18
+slave 2: invalid=0/0/0/0  rxerr=0/0/0/0  fwd=18/0/0/0  lostlink=0/0/0/0  pu=0
+```
+
+Every *port* on both drives is clean — no invalid frames, no RX errors, no lost
+links — yet slave 1's **processing unit** rejected 18 frames, and the same 18
+appear as forwarded errors at slave 2's IN port and back at slave 1's port 1 on
+the return path. So the wire was electrically intact and the frame was not.
+
+**This has not been isolated, and it is recorded as open rather than explained.**
+The honest reading is only that the first mark appears at slave 1's processing
+unit, not at any receiver. Two candidates, neither eliminated:
+
+1. The same transmit-side `r8169` fault as the frame losses, now visible at a
+   second counter because the larger frame gives it more to damage.
+2. Something specific to the longer frame.
+
+The comparison that separates them has not been run: the same cycle, same NIC,
+with the assignment left at `0x1601`/`0x1A01`. `bus_monitor` now prints exactly
+that instruction when it sees this pattern.
+
+Note the loss rate itself did **not** get worse with the bigger frame — 0.10 %
+against 0.19 % on the same NIC at the same cycle — which is mild evidence
+against the frame length being the cause.
+
+> **Correction to the tooling, not just the record.** `PortErrors::detected_error()`
+> originally ignored `processing_unit_error`, so `bus_monitor` reported *"No port
+> detected damage"* on the run above. That is true of the ports and false of the
+> device. The ports check the physical layer; the processing unit checks the
+> frame it was handed. They are now reported as separate findings.
 
 **Consequence for the product:** the BOM requirement is an Intel i210/i211 on
 the **`igb`** driver. Stated as a driver requirement rather than a brand
