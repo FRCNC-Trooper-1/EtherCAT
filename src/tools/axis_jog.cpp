@@ -48,6 +48,8 @@ struct Options {
     double ferr_limit = 1.0;   ///< mm
     std::int64_t cycle_us = 1000;
     int cpu = 2;
+    long dc_timeout_ms = 0;   ///< 0 keeps the CyclicTask default
+    long rx_timeout_us = 0;   ///< 0 derives from the cycle
     bool block_lrw = false;
     bool no_dc = false;
     bool assume_yes = false;
@@ -69,6 +71,8 @@ void usage() {
         "  --ferr F            following error limit in mm (default 1)\n"
         "  --cycle N           cycle time in microseconds (default 1000)\n"
         "  --cpu N             isolated CPU to pin the RT thread to (default 2)\n"
+        "  --dc-timeout N      ms to wait for DC lock before failing (default 10000)\n"
+        "  --rx-timeout N      frame receive timeout, us (default: cycle/4)\n"
         "  --block-lrw         force LRD/LWR instead of LRW (Yaskawa Sigma-7)\n"
         "  --no-dc             run without distributed clocks (diagnostics only)\n"
         "  --yes               skip the confirmation prompt\n");
@@ -179,6 +183,10 @@ bool parse_args(int argc, char** argv, Options& o) {
                 o.cycle_us = v;
             } else if (std::strcmp(a, "--cpu") == 0) {
                 o.cpu = static_cast<int>(v);
+            } else if (std::strcmp(a, "--dc-timeout") == 0) {
+                o.dc_timeout_ms = v;
+            } else if (std::strcmp(a, "--rx-timeout") == 0) {
+                o.rx_timeout_us = v;
             } else {
                 std::printf("unknown option %s\n", a);
                 return false;
@@ -265,6 +273,13 @@ int main(int argc, char** argv) {
     cfg.bus.use_dc = !o.no_dc;
     cfg.bus.force_block_lrw = o.block_lrw;
 
+    if (o.dc_timeout_ms > 0) {
+        cfg.dc_lock_timeout_ms = static_cast<std::uint32_t>(o.dc_timeout_ms);
+    }
+    if (o.rx_timeout_us > 0) {
+        cfg.bus.rx_timeout_us = static_cast<int>(o.rx_timeout_us);
+    }
+
     cfg.rt.cpu = o.cpu;
     cfg.machine.axis_count = o.axes;
     // Stop at least as hard as we accelerate, or a stop overshoots the move.
@@ -307,8 +322,13 @@ int main(int argc, char** argv) {
     std::printf("%d slaves, waiting for OPERATIONAL...\n", task->bus().slave_count());
 
     ipc::MachineStatus s{};
-    if (!wait_for(*task, [](const ipc::MachineStatus& x) { return x.bus_operational; }, 15000,
-                  s)) {
+    // Wait at least as long as the task itself will spend trying to lock DC,
+    // plus headroom for the OPERATIONAL transition. A fixed 15 s here silently
+    // undercut a 30 s DC allowance and reported a timeout the task had not yet
+    // reached.
+    const int op_wait_ms = static_cast<int>(cfg.dc_lock_timeout_ms) + 15000;
+    if (!wait_for(*task, [](const ipc::MachineStatus& x) { return x.bus_operational; },
+                  op_wait_ms, s)) {
         std::printf("did not reach OPERATIONAL: %s\n", task->error());
         task->stop();
         return 1;
