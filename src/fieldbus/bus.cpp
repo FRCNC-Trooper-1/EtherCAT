@@ -144,8 +144,53 @@ void Bus::fail_preop(int slave, const char* what, std::uint16_t index,
     preop_failed_ = true;
 }
 
-bool Bus::assign_pdo(int slave, std::uint16_t assign_index,
-                     std::uint16_t mapping_index) noexcept {
+bool Bus::write_mapping(int slave, const PdoMapping& m) noexcept {
+    // Same rule one level down: the entries of a mapping object are read-only
+    // while the object claims to hold any, so the count goes to zero first.
+    if (!write_sdo_u8(slave, m.index, 0x00, 0)) {
+        fail_preop(slave, "mapping object is not writable", m.index, 0x00);
+        return false;
+    }
+
+    for (int i = 0; i < m.entry_count; i++) {
+        const auto sub = static_cast<std::uint8_t>(i + 1);
+        if (!write_sdo_u32(slave, m.index, sub, m.entry[i])) {
+            // The most likely cause by far is that the drive allocates fewer
+            // sub-entries than we asked for, so say which one ran out rather
+            // than reporting the object as a whole.
+            fail_preop(slave, "mapping entry refused", m.index, sub);
+            return false;
+        }
+    }
+
+    if (!write_sdo_u8(slave, m.index, 0x00, static_cast<std::uint8_t>(m.entry_count))) {
+        fail_preop(slave, "mapping entry count refused", m.index, 0x00);
+        return false;
+    }
+
+    // Read every entry back. A composed mapping is the case where silent
+    // acceptance hurts most: the offsets this master computes come from what
+    // it believes it wrote, and a drive that kept its own would have the axis
+    // commanded from the wrong bytes with a perfectly healthy working counter.
+    std::uint8_t count = 0;
+    if (!read_sdo_u8(slave, m.index, 0x00, count) ||
+        count != static_cast<std::uint8_t>(m.entry_count)) {
+        fail_preop(slave, "mapping entry count did not take", m.index, 0x00);
+        return false;
+    }
+    for (int i = 0; i < m.entry_count; i++) {
+        const auto sub = static_cast<std::uint8_t>(i + 1);
+        std::uint32_t actual = 0;
+        if (!read_sdo_u32(slave, m.index, sub, actual) || actual != m.entry[i]) {
+            fail_preop(slave, "mapping entry did not take", m.index, sub);
+            return false;
+        }
+    }
+    return true;
+}
+
+bool Bus::assign_pdo(int slave, std::uint16_t assign_index, std::uint16_t mapping_index,
+                     const PdoMapping* compose) noexcept {
     // Zero the count first. The sub-entries of 0x1C12/0x1C13 are read-only
     // while the assignment is active, so writing :01 straight away is refused
     // by a conforming drive and — worse — silently ignored by some others.
@@ -153,6 +198,16 @@ bool Bus::assign_pdo(int slave, std::uint16_t assign_index,
         fail_preop(slave, "cannot clear PDO assignment", assign_index, 0x00);
         return false;
     }
+
+    // Composing goes HERE, between clearing the assignment and selecting the
+    // mapping. A mapping object that is currently assigned to a sync manager
+    // is locked, so it cannot be rewritten before this point; and it must be
+    // written before the assignment names it, or the drive validates the
+    // mapping it is about to replace.
+    if (compose != nullptr && !write_mapping(slave, *compose)) {
+        return false;
+    }
+
     if (!write_sdo_u16(slave, assign_index, 0x01, mapping_index)) {
         fail_preop(slave, "PDO assignment refused", assign_index, 0x01);
         return false;
@@ -222,12 +277,17 @@ int Bus::apply_preop(int slave) noexcept {
         return 1;
     }
 
-    if (cfg_.preop.rx_pdo_assign != 0 &&
-        !assign_pdo(slave, kRxPdoAssign, cfg_.preop.rx_pdo_assign)) {
+    const std::uint16_t rx_assign = cfg_.preop.effective_rx_assign();
+    const std::uint16_t tx_assign = cfg_.preop.effective_tx_assign();
+    const PdoMapping* rx_compose =
+        cfg_.preop.rx_mapping.empty() ? nullptr : &cfg_.preop.rx_mapping;
+    const PdoMapping* tx_compose =
+        cfg_.preop.tx_mapping.empty() ? nullptr : &cfg_.preop.tx_mapping;
+
+    if (rx_assign != 0 && !assign_pdo(slave, kRxPdoAssign, rx_assign, rx_compose)) {
         return 0;
     }
-    if (cfg_.preop.tx_pdo_assign != 0 &&
-        !assign_pdo(slave, kTxPdoAssign, cfg_.preop.tx_pdo_assign)) {
+    if (tx_assign != 0 && !assign_pdo(slave, kTxPdoAssign, tx_assign, tx_compose)) {
         return 0;
     }
     if (cfg_.preop.set_interpolation_period && !apply_interpolation_period(slave)) {

@@ -401,7 +401,9 @@ private:
     static int preop_hook(ecx_contextt* ctx, std::uint16_t slave) noexcept;
 
     int apply_preop(int slave) noexcept;
-    bool assign_pdo(int slave, std::uint16_t assign_index, std::uint16_t mapping_index) noexcept;
+    bool assign_pdo(int slave, std::uint16_t assign_index, std::uint16_t mapping_index,
+                    const PdoMapping* compose) noexcept;
+    bool write_mapping(int slave, const PdoMapping& m) noexcept;
     bool apply_interpolation_period(int slave) noexcept;
     void fail_preop(int slave, const char* what, std::uint16_t index,
                     std::uint8_t subindex) noexcept;

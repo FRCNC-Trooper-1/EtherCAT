@@ -66,6 +66,7 @@ struct Options {
     long rx_pdo = 0;            ///< 0 keeps the drive's own assignment
     long tx_pdo = 0;
     bool set_interp = false;
+    bool custom_map = false;    ///< compose a CSP+feedforward mapping
     bool block_lrw = false;
     bool no_dc = false;
 };
@@ -89,8 +90,11 @@ void usage() {
         "  --rx-pdo N      assign this mapping to 0x1C12 in PRE-OP, e.g. 0x1600\n"
         "  --tx-pdo N      assign this mapping to 0x1C13 in PRE-OP, e.g. 0x1A00\n"
         "  --set-interp    write 0x60C2 to match the cycle, and verify it took\n"
+        "  --custom-map    COMPOSE a CSP mapping with velocity feedforward into\n"
+        "                  --rx-pdo/--tx-pdo (default 0x1602/0x1A02), rather than\n"
+        "                  selecting one of the drive's predefined mappings\n"
         "\n"
-        "The last three CHANGE THE DRIVE'S CONFIGURATION. Everything else here\n"
+        "The last four CHANGE THE DRIVE'S CONFIGURATION. Everything else here\n"
         "is read-only. Never enables an axis; safe with no motors connected.\n");
 }
 
@@ -133,6 +137,10 @@ bool parse_args(int argc, char** argv, Options& o) {
         }
         if (std::strcmp(a, "--set-interp") == 0) {
             o.set_interp = true;
+            continue;
+        }
+        if (std::strcmp(a, "--custom-map") == 0) {
+            o.custom_map = true;
             continue;
         }
         if (i + 1 >= argc) {
@@ -195,6 +203,17 @@ bool parse_args(int argc, char** argv, Options& o) {
     if (o.cycle_us < 50) {
         std::printf("--cycle below 50 us is not credible on any PC\n");
         return false;
+    }
+    if (o.custom_map) {
+        // Default to the spare mapping objects rather than overwriting a
+        // predefined one. Composing over 0x1600 would destroy a mapping the
+        // vendor validated, and there is no way back short of a power cycle.
+        if (o.rx_pdo == 0) {
+            o.rx_pdo = 0x1602;
+        }
+        if (o.tx_pdo == 0) {
+            o.tx_pdo = 0x1A02;
+        }
     }
     if (o.rx_pdo != 0 && (o.rx_pdo < 0x1600 || o.rx_pdo > 0x17FF)) {
         std::printf("--rx-pdo must be an RxPDO mapping object, 0x1600..0x17FF\n");
@@ -292,6 +311,11 @@ int main(int argc, char** argv) {
     cfg.bus.preop.rx_pdo_assign = static_cast<std::uint16_t>(o.rx_pdo);
     cfg.bus.preop.tx_pdo_assign = static_cast<std::uint16_t>(o.tx_pdo);
     cfg.bus.preop.set_interpolation_period = o.set_interp;
+    if (o.custom_map) {
+        fieldbus::make_csp_mapping(cfg.bus.preop.rx_mapping, cfg.bus.preop.tx_mapping,
+                                   static_cast<std::uint16_t>(o.rx_pdo),
+                                   static_cast<std::uint16_t>(o.tx_pdo));
+    }
 
     cfg.rt.cpu = o.cpu;
     cfg.machine.axis_count = o.axes;
@@ -323,6 +347,15 @@ int main(int argc, char** argv) {
             std::printf("  0x60C2 <- %u e%d", p.units, p.exponent);
         }
         std::printf("\n");
+
+        if (o.custom_map) {
+            const auto& rx = cfg.bus.preop.rx_mapping;
+            const auto& tx = cfg.bus.preop.tx_mapping;
+            std::printf("composing 0x%04X (%d entries, %u bytes) and "
+                        "0x%04X (%d entries, %u bytes)\n",
+                        rx.index, rx.entry_count, rx.total_bits() / 8, tx.index,
+                        tx.entry_count, tx.total_bits() / 8);
+        }
     }
 
     const fieldbus::BusResult r = task->start(cfg);

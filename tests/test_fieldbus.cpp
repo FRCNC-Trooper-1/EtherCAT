@@ -563,6 +563,93 @@ void test_interpolation_period_rejects_what_it_cannot_represent() {
     CHECK(encode_interpolation_period(-1'000'000).to_ns() == 0);
 }
 
+// --- composed PDO mappings --------------------------------------------------
+
+void test_mapping_entries_use_the_wire_encoding() {
+    // The same 32-bit layout the drive reports back, so a composed mapping and
+    // a discovered one are directly comparable. Getting this backwards would
+    // write a valid-looking mapping for entirely different objects.
+    PdoMapping m;
+    m.index = 0x1602;
+    CHECK(m.add(0x6040, 0x00, 16));
+    CHECK(m.add(0x60B1, 0x00, 32));
+
+    CHECK(m.entry[0] == 0x60400010u);
+    CHECK(m.entry[1] == 0x60B10020u);
+    CHECK(m.entry_count == 2);
+    CHECK(m.total_bits() == 48);
+    CHECK(!m.empty());
+}
+
+void test_mapping_rejects_nonsense_and_is_bounded() {
+    PdoMapping m;
+    m.index = 0x1602;
+    CHECK(!m.add(0x0000, 0x00, 16));  // padding is not something we compose
+    CHECK(!m.add(0x6040, 0x00, 0));   // zero-width entry
+    CHECK(m.entry_count == 0);
+
+    for (int i = 0; i < PdoMapping::kMaxEntries; i++) {
+        CHECK(m.add(0x6040, static_cast<std::uint8_t>(i), 8));
+    }
+    CHECK(!m.add(0x6040, 0x00, 8));
+    CHECK(m.entry_count == PdoMapping::kMaxEntries);
+}
+
+void test_mapping_with_no_index_is_empty() {
+    // entry_count alone must not arm the composer: writing entries into
+    // mapping object 0x0000 would be a write to nowhere.
+    PdoMapping m;
+    CHECK(m.add(0x6040, 0x00, 16));
+    CHECK(m.empty());
+}
+
+void test_csp_mapping_carries_what_the_predefined_ones_do_not() {
+    // The reason this exists at all: neither 0x1600 nor 0x1601 on the bench
+    // drives carries 0x60B1, so feedforward is unreachable by reassignment.
+    PdoMapping rx;
+    PdoMapping tx;
+    make_csp_mapping(rx, tx, 0x1602, 0x1A02);
+
+    CHECK(rx.index == 0x1602);
+    CHECK(tx.index == 0x1A02);
+
+    bool has_velocity_offset = false;
+    for (int i = 0; i < rx.entry_count; i++) {
+        has_velocity_offset |= (rx.entry[i] >> 16) == 0x60B1;
+    }
+    CHECK(has_velocity_offset);
+
+    // 6040 + 607A + 60B1 + 60B2 + 6060 = 2 + 4 + 4 + 2 + 1
+    CHECK(rx.total_bits() == 13 * 8);
+    // 6041 + 6064 + 606C + 60F4 + 6077 + 6061 = 2 + 4 + 4 + 4 + 2 + 1
+    CHECK(tx.total_bits() == 17 * 8);
+
+    // 0x6072 is deliberately absent: composing our own means the torque limit
+    // stays in the drive's parameters rather than becoming an obligation on
+    // the master every cycle.
+    for (int i = 0; i < rx.entry_count; i++) {
+        CHECK((rx.entry[i] >> 16) != 0x6072);
+    }
+}
+
+void test_composed_mapping_implies_its_own_assignment() {
+    // A composed mapping must not need rx_pdo_assign set as well; forgetting
+    // it would write the mapping and then leave the drive using a different one.
+    PreOpConfig cfg;
+    CHECK(cfg.empty());
+    make_csp_mapping(cfg.rx_mapping, cfg.tx_mapping, 0x1602, 0x1A02);
+
+    CHECK(!cfg.empty());
+    CHECK(cfg.effective_rx_assign() == 0x1602);
+    CHECK(cfg.effective_tx_assign() == 0x1A02);
+
+    // An explicit assignment still works on its own.
+    PreOpConfig plain;
+    plain.rx_pdo_assign = 0x1600;
+    CHECK(plain.effective_rx_assign() == 0x1600);
+    CHECK(plain.effective_tx_assign() == 0);
+}
+
 void test_preop_config_starts_empty_and_records_writes() {
     PreOpConfig cfg;
     CHECK(cfg.empty());
@@ -638,6 +725,11 @@ int main() {
     test_interpolation_period_uses_the_forms_drives_report();
     test_interpolation_period_coarsens_when_the_byte_forces_it();
     test_interpolation_period_rejects_what_it_cannot_represent();
+    test_mapping_entries_use_the_wire_encoding();
+    test_mapping_rejects_nonsense_and_is_bounded();
+    test_mapping_with_no_index_is_empty();
+    test_csp_mapping_carries_what_the_predefined_ones_do_not();
+    test_composed_mapping_implies_its_own_assignment();
     test_preop_config_starts_empty_and_records_writes();
     test_preop_write_targets_one_slave_or_all();
     test_preop_write_table_is_bounded();

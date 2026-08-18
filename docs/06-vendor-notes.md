@@ -178,10 +178,63 @@ sudo ./build/bus_monitor ethX --axes 2 --cycle 4000 --rx-pdo 0x1600 --tx-pdo 0x1
 ```
 
 **Neither `0x1600` nor `0x1A00` carries `0x60B1` (velocity offset).** Velocity
-feedforward therefore needs a *custom* mapping written into a spare object
-(`0x1602`/`0x1A02`), not just a reassignment — and that is only worth doing once
-`0x60B1` is confirmed present in the object dictionary. Until then
-`CyclicTaskConfig::require_velocity_feedforward` must stay off.
+feedforward therefore needs a *custom* mapping written into a spare object, not
+just a reassignment.
+
+### ✅ `0x60B1` exists — feedforward is reachable, by composing a mapping
+
+`bus_scan`'s object-dictionary probe, both drives:
+
+| Object | | |
+|---|---|---|
+| `0x60B1` | velocity offset | **present** |
+| `0x60B2` | torque offset | **present** |
+| `0x606C` | velocity actual | **present** |
+
+Every object the controller wants is in the dictionary. What is missing is a
+*predefined mapping* that carries them — a different problem with a different
+fix.
+
+And the fix is available, because the spare mapping objects are **present and
+empty**:
+
+```
+0x1602  2 entries    0x0000:00  0 bits  PADDING   (x2)   = 0 bytes
+0x1603  2 entries    ... empty
+0x1A02  2 entries    ... empty
+0x1A03  3 entries    ... empty
+```
+
+`0x1604`/`0x1A04` and above return `06020000 The object does not exist`, so the
+device offers exactly four mapping objects per direction: two populated by the
+vendor, two free.
+
+> The reported sub-entry count of 2 (3 on `0x1A03`) is the *current* count of an
+> empty object, and whether it is also a ceiling is not answerable by reading —
+> only by writing. `Bus::write_mapping()` reports which sub-entry was refused if
+> it is, rather than blaming the object as a whole.
+
+**Use `--custom-map`.** It composes into `0x1602`/`0x1A02` by default, never over
+a vendor mapping:
+
+| | RxPDO `0x1602` | TxPDO `0x1A02` |
+|---|---|---|
+| | `6040` controlword | `6041` statusword |
+| | `607A` target position | `6064` position actual |
+| | **`60B1` velocity offset** | `606C` velocity actual |
+| | `60B2` torque offset | `60F4` following error |
+| | `6060` modes of operation | `6077` torque actual |
+| | | `6061` modes display |
+| Size | 13 bytes | 17 bytes |
+
+`0x6072` max torque is deliberately **excluded**. Composing our own mapping
+means it is simply not in the image, so the limit stays in the drive's own
+parameters instead of becoming an obligation on the master every cycle — the
+opposite trade from `0x1600`, and the better one.
+
+Not yet confirmed on hardware: the drive may refuse a mapping this size, or
+allow fewer sub-entries than requested. Both failures are named by
+`Bus::preop_error()` down to the sub-entry.
 
 #### Result of the reassignment — MEASURED
 
@@ -479,9 +532,14 @@ per-subindex on `0x06010004`.
    parameter write access, or firmware. Get the BTO datasheet from Yaskawa
    quoting the full model string. **If no one will produce that document, treat
    the part as unqualified.**
-2. **Sigma-X product code** (`1018h:02`) — the manual section exists at p636 but
-   the value was not captured. Read it off the drive with `slaveinfo`.
+2. ~~**Sigma-X product code** (`1018h:02`)~~ — **resolved by `bus_scan`:**
+   vendor `0x00000539`, product code `0x02200901`, revision `0x01055030`, on
+   both `SGDXS-xxxxA0xY3503A` units.
 3. **Sigma-X native encoder resolution** — see the compatibility-mode note above.
+4. **Will the drive accept a composed mapping?** `0x1602`/`0x1A02` exist and are
+   empty, and every object wanted is in the dictionary — but the sub-entry
+   ceiling and the maximum mapped size are both unmeasured. `--custom-map` is
+   built and untried.
 
 > **Note on `10F1h` (Sync error setting).** Present in the object dictionary.
 > This is the knob behind the Sigma-X PRE-OP drop-out workaround. Treat a

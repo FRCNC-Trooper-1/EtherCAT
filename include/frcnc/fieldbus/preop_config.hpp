@@ -75,6 +75,54 @@ struct InterpolationPeriod {
 /// significant digits.
 [[nodiscard]] InterpolationPeriod encode_interpolation_period(std::int64_t cycle_ns) noexcept;
 
+/// A PDO mapping object's contents, to be written into the drive.
+///
+/// Needed when no predefined mapping carries what the machine requires. On
+/// Yaskawa Sigma-X neither 0x1600 nor 0x1601 includes 0x60B1, so velocity
+/// feedforward is unreachable by reassignment alone — but 0x1602 and 0x1A02 are
+/// present and empty, which is a mapping object waiting to be filled in.
+///
+/// Writing one is strictly more invasive than selecting a predefined one: a
+/// reassignment picks from what the vendor validated, this composes something
+/// new. Both are PRE-OP only, and both are verified by readback.
+struct PdoMapping {
+    /// Most drives allocate 8 or fewer sub-entries per mapping object; the
+    /// bench Sigma-X reports 2 in 0x1602 today, and whether that is a current
+    /// count or a hard ceiling is only answerable by trying.
+    static constexpr int kMaxEntries = 12;
+
+    std::uint16_t index = 0;  ///< 0x1602, 0x1A02, ... 0 disables
+    std::uint32_t entry[kMaxEntries]{};
+    int entry_count = 0;
+
+    /// Append one object. Layout is bits 31..16 index, 15..8 subindex,
+    /// 7..0 bit length — the same encoding the drive reports back.
+    bool add(std::uint16_t object, std::uint8_t subindex, std::uint8_t bits) noexcept;
+
+    [[nodiscard]] bool empty() const noexcept { return index == 0 || entry_count == 0; }
+
+    /// Total mapped size. Worth checking against the drive's sync manager
+    /// capacity before writing: an oversized mapping is refused entry by entry
+    /// with no hint that the total was the problem.
+    [[nodiscard]] std::uint32_t total_bits() const noexcept;
+};
+
+/// Fill in the mapping this controller actually wants for a CNC axis.
+///
+/// Rx: controlword, target position, velocity offset, torque offset, mode.
+/// Tx: statusword, position actual, velocity actual, following error, torque
+///     actual, mode display.
+///
+/// 0x6072 max torque is deliberately LEFT OUT. A predefined mapping that
+/// includes it forces the master to command it every cycle; composing our own
+/// means it simply is not in the image, and the drive keeps whatever limit is
+/// configured in its own parameters. Fewer things to get wrong.
+///
+/// 0x60B8/0x60B9/0x60BA touch probe are left out for the same reason: nothing
+/// here uses them yet, and an unused entry is bytes on the wire every cycle.
+void make_csp_mapping(PdoMapping& rx, PdoMapping& tx, std::uint16_t rx_index,
+                      std::uint16_t tx_index) noexcept;
+
 /// What the master writes to each slave before the process image is mapped.
 struct PreOpConfig {
     static constexpr int kMaxWrites = 32;
@@ -94,16 +142,30 @@ struct PreOpConfig {
     /// anybody should trust. Turn it on deliberately.
     bool set_interpolation_period = false;
 
+    /// Mappings to COMPOSE, rather than select. When set, the mapping object is
+    /// written first and then assigned, so rx_pdo_assign / tx_pdo_assign need
+    /// not be set as well — effective_rx_assign() prefers this.
+    PdoMapping rx_mapping{};
+    PdoMapping tx_mapping{};
+
     SdoWrite write[kMaxWrites]{};
     int write_count = 0;
 
     /// @return false when the table is full or the write is malformed.
     bool add(const SdoWrite& w) noexcept;
 
+    /// Which mapping object ends up assigned to each sync manager.
+    [[nodiscard]] std::uint16_t effective_rx_assign() const noexcept {
+        return rx_mapping.index != 0 ? rx_mapping.index : rx_pdo_assign;
+    }
+    [[nodiscard]] std::uint16_t effective_tx_assign() const noexcept {
+        return tx_mapping.index != 0 ? tx_mapping.index : tx_pdo_assign;
+    }
+
     /// Nothing to apply, so the hook need not be registered at all.
     [[nodiscard]] bool empty() const noexcept {
-        return rx_pdo_assign == 0 && tx_pdo_assign == 0 && !set_interpolation_period &&
-               write_count == 0;
+        return effective_rx_assign() == 0 && effective_tx_assign() == 0 &&
+               !set_interpolation_period && write_count == 0;
     }
 };
 

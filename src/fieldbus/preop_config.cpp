@@ -63,6 +63,45 @@ InterpolationPeriod encode_interpolation_period(std::int64_t cycle_ns) noexcept 
     return p;
 }
 
+bool PdoMapping::add(std::uint16_t object, std::uint8_t subindex, std::uint8_t bits) noexcept {
+    if (entry_count >= kMaxEntries || object == 0 || bits == 0) {
+        return false;
+    }
+    entry[entry_count++] = (static_cast<std::uint32_t>(object) << 16) |
+                           (static_cast<std::uint32_t>(subindex) << 8) |
+                           static_cast<std::uint32_t>(bits);
+    return true;
+}
+
+std::uint32_t PdoMapping::total_bits() const noexcept {
+    std::uint32_t bits = 0;
+    for (int i = 0; i < entry_count; i++) {
+        bits += entry[i] & 0xFFu;
+    }
+    return bits;
+}
+
+void make_csp_mapping(PdoMapping& rx, PdoMapping& tx, std::uint16_t rx_index,
+                      std::uint16_t tx_index) noexcept {
+    rx = PdoMapping{};
+    tx = PdoMapping{};
+
+    rx.index = rx_index;
+    (void)rx.add(0x6040, 0x00, 16);  // controlword
+    (void)rx.add(0x607A, 0x00, 32);  // target position
+    (void)rx.add(0x60B1, 0x00, 32);  // velocity offset -- the point of the exercise
+    (void)rx.add(0x60B2, 0x00, 16);  // torque offset
+    (void)rx.add(0x6060, 0x00, 8);   // modes of operation
+
+    tx.index = tx_index;
+    (void)tx.add(0x6041, 0x00, 16);  // statusword
+    (void)tx.add(0x6064, 0x00, 32);  // position actual
+    (void)tx.add(0x606C, 0x00, 32);  // velocity actual
+    (void)tx.add(0x60F4, 0x00, 32);  // following error
+    (void)tx.add(0x6077, 0x00, 16);  // torque actual
+    (void)tx.add(0x6061, 0x00, 8);   // modes display
+}
+
 bool PreOpConfig::add(const SdoWrite& w) noexcept {
     if (write_count >= kMaxWrites || !w.valid() || w.slave < 0) {
         return false;
