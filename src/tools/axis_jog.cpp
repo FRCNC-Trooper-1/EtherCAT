@@ -50,6 +50,9 @@ struct Options {
     int cpu = 2;
     long dc_timeout_ms = 0;   ///< 0 keeps the CyclicTask default
     long rx_timeout_us = 0;   ///< 0 derives from the cycle
+    long rx_pdo = 0;          ///< 0 keeps the drive's own assignment
+    long tx_pdo = 0;
+    bool set_interp = false;
     bool block_lrw = false;
     bool no_dc = false;
     bool assume_yes = false;
@@ -75,7 +78,14 @@ void usage() {
         "  --rx-timeout N      frame receive timeout, us (default: cycle/4)\n"
         "  --block-lrw         force LRD/LWR instead of LRW (Yaskawa Sigma-7)\n"
         "  --no-dc             run without distributed clocks (diagnostics only)\n"
-        "  --yes               skip the confirmation prompt\n");
+        "  --rx-pdo N          assign this mapping to 0x1C12 in PRE-OP, e.g. 0x1600\n"
+        "  --tx-pdo N          assign this mapping to 0x1C13 in PRE-OP, e.g. 0x1A00\n"
+        "  --set-interp        write 0x60C2 to match the cycle, and verify it took\n"
+        "  --yes               skip the confirmation prompt\n"
+        "\n"
+        "The three PRE-OP options change the drive's own configuration. Confirm\n"
+        "the resulting map before trusting a move: reassigning 0x1C12 changes\n"
+        "where target position sits in the frame.\n");
 }
 
 bool parse_double(const char* s, double& out) {
@@ -134,6 +144,8 @@ bool parse_args(int argc, char** argv, Options& o) {
             o.no_dc = true;
         } else if (std::strcmp(a, "--yes") == 0) {
             o.assume_yes = true;
+        } else if (std::strcmp(a, "--set-interp") == 0) {
+            o.set_interp = true;
         } else if (!has_value) {
             std::printf("missing value for %s\n", a);
             return false;
@@ -169,6 +181,16 @@ bool parse_args(int argc, char** argv, Options& o) {
             if (!parse_slaves(argv[++i], o.slave)) {
                 return false;
             }
+        } else if (std::strcmp(a, "--rx-pdo") == 0 || std::strcmp(a, "--tx-pdo") == 0) {
+            // Base 0, so mapping objects can be given as the manual prints
+            // them: 0x1600, not 5632.
+            char* end = nullptr;
+            const long v = std::strtol(argv[++i], &end, 0);
+            if (end == argv[i] || *end != '\0') {
+                std::printf("bad value for %s: %s\n", a, argv[i]);
+                return false;
+            }
+            (a[2] == 'r' ? o.rx_pdo : o.tx_pdo) = v;
         } else {
             long v = 0;
             if (!parse_int(argv[i + 1], v)) {
@@ -206,15 +228,42 @@ bool parse_args(int argc, char** argv, Options& o) {
         std::printf("--cycle below 50 us is not credible on any PC\n");
         return false;
     }
+    if (o.rx_pdo != 0 && (o.rx_pdo < 0x1600 || o.rx_pdo > 0x17FF)) {
+        std::printf("--rx-pdo must be an RxPDO mapping object, 0x1600..0x17FF\n");
+        return false;
+    }
+    if (o.tx_pdo != 0 && (o.tx_pdo < 0x1A00 || o.tx_pdo > 0x1BFF)) {
+        std::printf("--tx-pdo must be a TxPDO mapping object, 0x1A00..0x1BFF\n");
+        return false;
+    }
     return true;
 }
 
 bool confirm(const Options& o) {
     std::printf(
         "\nAbout to move axis %d (slave %d) by %+.4f mm at %.1f mm/min.\n"
-        "Scaling is %.1f counts/mm -- if that is wrong, so is the distance.\n"
-        "Type 'yes' to proceed: ",
+        "Scaling is %.1f counts/mm -- if that is wrong, so is the distance.\n",
         o.axis, o.slave[o.axis], o.distance_mm, o.feed_mm_min, o.counts_per_mm);
+
+    // Say this before the move, not after. Rewriting the PDO assignment or the
+    // interpolation period changes the drive's stored configuration, and it
+    // stays changed when this tool exits.
+    if (o.rx_pdo != 0 || o.tx_pdo != 0 || o.set_interp) {
+        std::printf("\nThis will also WRITE THE DRIVE'S CONFIGURATION in PRE-OP:\n");
+        if (o.rx_pdo != 0) {
+            std::printf("  0x1C12 (RxPDO assignment) <- 0x%04lX\n",
+                        static_cast<unsigned long>(o.rx_pdo));
+        }
+        if (o.tx_pdo != 0) {
+            std::printf("  0x1C13 (TxPDO assignment) <- 0x%04lX\n",
+                        static_cast<unsigned long>(o.tx_pdo));
+        }
+        if (o.set_interp) {
+            std::printf("  0x60C2 (interpolation time period) <- %" PRId64 " us\n", o.cycle_us);
+        }
+    }
+
+    std::printf("Type 'yes' to proceed: ");
     std::fflush(stdout);
 
     char line[16] = {};
@@ -279,6 +328,9 @@ int main(int argc, char** argv) {
     if (o.rx_timeout_us > 0) {
         cfg.bus.rx_timeout_us = static_cast<int>(o.rx_timeout_us);
     }
+    cfg.bus.preop.rx_pdo_assign = static_cast<std::uint16_t>(o.rx_pdo);
+    cfg.bus.preop.tx_pdo_assign = static_cast<std::uint16_t>(o.tx_pdo);
+    cfg.bus.preop.set_interpolation_period = o.set_interp;
 
     cfg.rt.cpu = o.cpu;
     cfg.machine.axis_count = o.axes;

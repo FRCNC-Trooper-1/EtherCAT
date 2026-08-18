@@ -127,6 +127,7 @@ target_link_libraries(frcnc_ipc INTERFACE Threads::Threads)
 add_library(frcnc_fieldbus STATIC
     src/fieldbus/pdo_map.cpp
     src/fieldbus/dc_sync.cpp
+    src/fieldbus/preop_config.cpp
 )
 
 target_include_directories(frcnc_fieldbus PUBLIC

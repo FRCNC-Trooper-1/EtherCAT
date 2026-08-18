@@ -158,6 +158,31 @@ For a CNC, prefer `0x1A00` over `0x1A01` — it already carries `60F4` (followin
 error) and `6061` (modes display), both of which you want cyclically rather
 than over SDO. See [`04 §4`](04-drive-cia402.md#4-csp-process-data).
 
+### ✅ Sigma-X default assignment — MEASURED
+
+Read off two `SGDXS-xxxxA0xY3503A` drives with `bus_scan`, not taken from an ESI:
+
+| Object | Value | Contents (6 bytes each) |
+|---|---|---|
+| `0x1C12:01` | **`0x1601`** | `6040` Controlword, `607A` Target position |
+| `0x1C13:01` | **`0x1A01`** | `6041` Statusword, `6064` Position actual |
+
+So the Sigma-X ships selecting the **minimal CSP set**, exactly as the Sigma-7
+IgH configurations do. That is enough to move an axis and not enough to
+supervise one: no `6060`, no `6061`, no `60F4`, no `6077`.
+
+`0x1600` / `0x1A00` are richer and are what this controller assigns:
+
+```bash
+sudo ./build/bus_monitor ethX --axes 2 --cycle 4000 --rx-pdo 0x1600 --tx-pdo 0x1A00
+```
+
+**Neither `0x1600` nor `0x1A00` carries `0x60B1` (velocity offset).** Velocity
+feedforward therefore needs a *custom* mapping written into a spare object
+(`0x1602`/`0x1A02`), not just a reassignment — and that is only worth doing once
+`0x60B1` is confirmed present in the object dictionary. Until then
+`CyclicTaskConfig::require_velocity_feedforward` must stay off.
+
 ### ✅ Cycle time and `0x60C2` — resolved for both generations
 
 **Supported DC cycles:**
@@ -196,6 +221,19 @@ cycle; the drive follows.
 > master cycle without writing `0x60C2`, the drive expects a new setpoint every
 > 125 µs and will interpolate against a period eight times shorter than reality.
 > **Always write `0x60C2` explicitly.**
+
+Confirmed on the bench: both drives read back `0x60C2 = 125 µs` out of the box.
+`--set-interp` writes it to match the master cycle and verifies the readback —
+see [`03 §10`](03-ethercat-bringup.md#10-writing-configuration-in-pre-op).
+
+One encoding difference from the table above, and it is not a discrepancy:
+`encode_interpolation_period()` emits 1 ms as **(1, −3)** rather than (100, −5).
+Both are inside the documented ranges (`:01` is 1..250, `:02` is −6..−3) and
+both are exactly 1 ms. Whole milliseconds take the `−3` form because that is
+what the drive itself reports for 4 ms, which keeps a readback comparison
+legible in a log. Note the units range is **1 to 250**, narrower than the
+UNSIGNED8 type — a cycle needing 251..255 units is refused by the drive, and the
+readback check reports it rather than letting it pass.
 
 ### Distributed Clocks
 

@@ -62,7 +62,15 @@ fb::BusResult CyclicTask::start(const CyclicTaskConfig& cfg) {
 
     r = bus_.configure();
     if (r != fb::BusResult::Ok) {
-        fail(fb::to_string(r));
+        // "PreOpConfigFailed" on its own is unactionable; the bus knows which
+        // slave refused which object, so say that instead.
+        if (r == fb::BusResult::PreOpConfigFailed && bus_.preop_error()[0] != '\0') {
+            char msg[192];
+            std::snprintf(msg, sizeof(msg), "PRE-OP config: %s", bus_.preop_error());
+            fail(msg);
+        } else {
+            fail(fb::to_string(r));
+        }
         bus_.close();
         return r;
     }

@@ -9,6 +9,7 @@
 
 #include "frcnc/fieldbus/dc_sync.hpp"
 #include "frcnc/fieldbus/pdo_map.hpp"
+#include "frcnc/fieldbus/preop_config.hpp"
 
 #include <cmath>
 #include <cstdio>
@@ -484,6 +485,98 @@ void test_dc_explicit_lock_tolerance_is_honoured() {
     CHECK(!dc.locked());
 }
 
+// --- 0x60C2 interpolation time period ---------------------------------------
+//
+// The only value in the PRE-OP configuration that is computed rather than
+// copied, and getting it wrong is invisible: the bus comes up, the axis moves,
+// and every commanded feed is out by exactly the ratio of the two periods.
+
+void test_interpolation_period_round_trips() {
+    // Whatever the encoding chooses, it must mean the period it was given.
+    for (std::int64_t ns : {125'000LL, 250'000LL, 500'000LL, 1'000'000LL, 2'000'000LL,
+                            4'000'000LL, 1'500'000LL, 10'000'000LL}) {
+        const InterpolationPeriod p = encode_interpolation_period(ns);
+        CHECK(p.valid);
+        CHECK(p.to_ns() == ns);
+    }
+}
+
+void test_interpolation_period_uses_the_forms_drives_report() {
+    // Whole milliseconds in the (n, -3) form, sub-millisecond in microseconds.
+    // Matching what the device itself reports is what makes a readback
+    // comparison legible in a log.
+    const InterpolationPeriod ms4 = encode_interpolation_period(4'000'000);
+    CHECK(ms4.units == 4);
+    CHECK(ms4.exponent == -3);
+
+    const InterpolationPeriod us125 = encode_interpolation_period(125'000);
+    CHECK(us125.units == 125);
+    CHECK(us125.exponent == -6);
+
+    const InterpolationPeriod us250 = encode_interpolation_period(250'000);
+    CHECK(us250.units == 250);
+    CHECK(us250.exponent == -6);
+}
+
+void test_interpolation_period_coarsens_when_the_byte_forces_it() {
+    // 500 us cannot be (500, -6): 0x60C2:01 is UNSIGNED8. It must coarsen a
+    // decade rather than truncate, overflow, or claim success.
+    const InterpolationPeriod p = encode_interpolation_period(500'000);
+    CHECK(p.valid);
+    CHECK(p.units == 50);
+    CHECK(p.exponent == -5);
+    CHECK(p.to_ns() == 500'000);
+}
+
+void test_interpolation_period_rejects_what_it_cannot_represent() {
+    // Sub-microsecond, and a period needing more significant digits than a
+    // byte holds. Refusing is the only safe answer -- a rounded value would
+    // make every feed wrong by a fraction nobody would think to look for.
+    CHECK(!encode_interpolation_period(1'500).valid);   // 1.5 us
+    CHECK(!encode_interpolation_period(0).valid);
+    CHECK(!encode_interpolation_period(-1'000'000).valid);
+    CHECK(!encode_interpolation_period(1'234'000).valid);  // 1234 us
+    CHECK(encode_interpolation_period(-1'000'000).to_ns() == 0);
+}
+
+void test_preop_config_starts_empty_and_records_writes() {
+    PreOpConfig cfg;
+    CHECK(cfg.empty());
+
+    cfg.rx_pdo_assign = 0x1600;
+    CHECK(!cfg.empty());
+
+    PreOpConfig other;
+    CHECK(other.add(SdoWrite{2, 0x6098, 0x00, 1, 35}));
+    CHECK(other.write_count == 1);
+    CHECK(!other.empty());
+
+    // Malformed writes are refused rather than stored: a zero-width SDO write
+    // is not a smaller write, it is a bug.
+    CHECK(!other.add(SdoWrite{1, 0x6040, 0x00, 3, 0}));
+    CHECK(!other.add(SdoWrite{1, 0x6040, 0x00, 0, 0}));
+    CHECK(other.write_count == 1);
+}
+
+void test_preop_write_targets_one_slave_or_all() {
+    const SdoWrite everywhere{0, 0x60C2, 0x01, 1, 4};
+    CHECK(everywhere.applies_to(1));
+    CHECK(everywhere.applies_to(7));
+
+    const SdoWrite just_two{2, 0x60C2, 0x01, 1, 4};
+    CHECK(!just_two.applies_to(1));
+    CHECK(just_two.applies_to(2));
+}
+
+void test_preop_write_table_is_bounded() {
+    PreOpConfig cfg;
+    for (int i = 0; i < PreOpConfig::kMaxWrites; i++) {
+        CHECK(cfg.add(SdoWrite{0, 0x2000, static_cast<std::uint8_t>(i), 2, 1}));
+    }
+    CHECK(!cfg.add(SdoWrite{0, 0x2000, 0x00, 2, 1}));
+    CHECK(cfg.write_count == PreOpConfig::kMaxWrites);
+}
+
 int main() {
     test_dc_lock_tolerance_scales_with_the_cycle();
     test_dc_explicit_lock_tolerance_is_honoured();
@@ -515,6 +608,14 @@ int main() {
     test_locked_is_a_pure_query();
     test_peak_error_is_retained();
     test_zero_cycle_config_is_safe();
+
+    test_interpolation_period_round_trips();
+    test_interpolation_period_uses_the_forms_drives_report();
+    test_interpolation_period_coarsens_when_the_byte_forces_it();
+    test_interpolation_period_rejects_what_it_cannot_represent();
+    test_preop_config_starts_empty_and_records_writes();
+    test_preop_write_targets_one_slave_or_all();
+    test_preop_write_table_is_bounded();
 
     std::printf("  %d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

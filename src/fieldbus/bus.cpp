@@ -14,6 +14,9 @@ namespace {
 constexpr std::uint16_t kRxPdoAssign = 0x1C12;
 constexpr std::uint16_t kTxPdoAssign = 0x1C13;
 
+/// Interpolation time period: :01 units, :02 decimal exponent.
+constexpr std::uint16_t kInterpolationTimePeriod = 0x60C2;
+
 void copy_name(char* dst, std::size_t cap, const char* src) noexcept {
     if (cap == 0) {
         return;
@@ -41,6 +44,7 @@ const char* to_string(BusResult r) noexcept {
         case BusResult::SafeOpFailed:        return "SafeOpFailed";
         case BusResult::OperationalFailed:   return "OperationalFailed";
         case BusResult::DcNotLocked:         return "DcNotLocked";
+        case BusResult::PreOpConfigFailed:   return "PreOpConfigFailed";
     }
     return "?";
 }
@@ -119,9 +123,143 @@ BusResult Bus::open(const BusConfig& cfg) noexcept {
     cycles_ = 0;
     wkc_errors_ = 0;
     consecutive_wkc_errors_ = 0;
+    preop_failed_ = false;
+    preop_error_[0] = '\0';
 
     state_ = BusState::Opened;
     return BusResult::Ok;
+}
+
+// --- PRE-OP configuration ----------------------------------------------------
+
+void Bus::fail_preop(int slave, const char* what, std::uint16_t index,
+                     std::uint8_t subindex) noexcept {
+    // Keep the FIRST failure. Once the assignment is half-written the follow-on
+    // errors are consequences, and the consequence is never the diagnosis.
+    if (preop_failed_) {
+        return;
+    }
+    std::snprintf(preop_error_, sizeof(preop_error_), "slave %d: %s (0x%04X:%02X)", slave, what,
+                  static_cast<unsigned>(index), static_cast<unsigned>(subindex));
+    preop_failed_ = true;
+}
+
+bool Bus::assign_pdo(int slave, std::uint16_t assign_index,
+                     std::uint16_t mapping_index) noexcept {
+    // Zero the count first. The sub-entries of 0x1C12/0x1C13 are read-only
+    // while the assignment is active, so writing :01 straight away is refused
+    // by a conforming drive and — worse — silently ignored by some others.
+    if (!write_sdo_u8(slave, assign_index, 0x00, 0)) {
+        fail_preop(slave, "cannot clear PDO assignment", assign_index, 0x00);
+        return false;
+    }
+    if (!write_sdo_u16(slave, assign_index, 0x01, mapping_index)) {
+        fail_preop(slave, "PDO assignment refused", assign_index, 0x01);
+        return false;
+    }
+    if (!write_sdo_u8(slave, assign_index, 0x00, 1)) {
+        fail_preop(slave, "cannot re-enable PDO assignment", assign_index, 0x00);
+        return false;
+    }
+
+    // Read it back. A drive that accepts the write and keeps its own mapping
+    // produces a bus that comes up perfectly and moves the axis using offsets
+    // taken from a mapping it is not using — the exact failure this whole
+    // discover-don't-assume design exists to prevent.
+    std::uint16_t actual = 0;
+    if (!read_sdo_u16(slave, assign_index, 0x01, actual) || actual != mapping_index) {
+        fail_preop(slave, "PDO assignment did not take", assign_index, 0x01);
+        return false;
+    }
+    return true;
+}
+
+bool Bus::apply_interpolation_period(int slave) noexcept {
+    const InterpolationPeriod want = encode_interpolation_period(cfg_.cycle_ns);
+    if (!want.valid) {
+        fail_preop(slave, "cycle time not representable in 0x60C2",
+                   kInterpolationTimePeriod, 0x00);
+        return false;
+    }
+
+    // Exponent before units. Either order passes through an intermediate the
+    // drive may not like; going coarse-then-fine passes through a period that
+    // is too LONG, and a drive is far likelier to reject one that is too short.
+    if (!write_sdo_i8(slave, kInterpolationTimePeriod, 0x02, want.exponent)) {
+        fail_preop(slave, "interpolation time index refused", kInterpolationTimePeriod, 0x02);
+        return false;
+    }
+    if (!write_sdo_u8(slave, kInterpolationTimePeriod, 0x01, want.units)) {
+        fail_preop(slave, "interpolation time units refused", kInterpolationTimePeriod, 0x01);
+        return false;
+    }
+
+    // Verified, not assumed. A drive that clamps this to its own supported
+    // period rather than refusing the write would otherwise interpolate every
+    // setpoint over the wrong interval, and the only symptom is that all axes
+    // run at a constant wrong fraction of commanded speed.
+    InterpolationPeriod got;
+    if (!read_sdo_u8(slave, kInterpolationTimePeriod, 0x01, got.units) ||
+        !read_sdo_i8(slave, kInterpolationTimePeriod, 0x02, got.exponent)) {
+        fail_preop(slave, "cannot read back 0x60C2", kInterpolationTimePeriod, 0x00);
+        return false;
+    }
+    got.valid = true;
+    if (got.to_ns() != cfg_.cycle_ns) {
+        fail_preop(slave, "0x60C2 does not match the cycle", kInterpolationTimePeriod, 0x00);
+        return false;
+    }
+    return true;
+}
+
+int Bus::apply_preop(int slave) noexcept {
+    if (preop_failed_ || slave < 1 || slave > kMaxSlaves) {
+        return 0;
+    }
+    // has_coe is filled in by configure() before the mapping runs, so it is
+    // valid here. Non-CoE slaves have no object dictionary to write to.
+    if (!slaves_[slave].has_coe) {
+        return 1;
+    }
+
+    if (cfg_.preop.rx_pdo_assign != 0 &&
+        !assign_pdo(slave, kRxPdoAssign, cfg_.preop.rx_pdo_assign)) {
+        return 0;
+    }
+    if (cfg_.preop.tx_pdo_assign != 0 &&
+        !assign_pdo(slave, kTxPdoAssign, cfg_.preop.tx_pdo_assign)) {
+        return 0;
+    }
+    if (cfg_.preop.set_interpolation_period && !apply_interpolation_period(slave)) {
+        return 0;
+    }
+
+    for (int i = 0; i < cfg_.preop.write_count; i++) {
+        const SdoWrite& w = cfg_.preop.write[i];
+        if (!w.applies_to(slave)) {
+            continue;
+        }
+        // Pack little-endian explicitly rather than aliasing the host integer.
+        // CoE is little-endian on the wire whatever the host is, and the whole
+        // point of this table is that the caller wrote a plain number.
+        std::uint8_t bytes[4] = {};
+        for (int b = 0; b < w.bytes && b < 4; b++) {
+            bytes[b] = static_cast<std::uint8_t>((w.value >> (8 * b)) & 0xFFu);
+        }
+        if (!write_sdo(slave, w.index, w.subindex, bytes, w.bytes)) {
+            fail_preop(slave, "SDO write refused", w.index, w.subindex);
+            return 0;
+        }
+    }
+
+    return 1;
+}
+
+int Bus::preop_hook(ecx_contextt* ctx, std::uint16_t slave) noexcept {
+    if (ctx == nullptr || ctx->userdata == nullptr) {
+        return 0;
+    }
+    return static_cast<Bus*>(ctx->userdata)->apply_preop(static_cast<int>(slave));
 }
 
 BusResult Bus::discover_pdo_map(int slave) noexcept {
@@ -219,7 +357,28 @@ BusResult Bus::configure() noexcept {
         slaves_[i].has_soe = (ctx_.slavelist[i].mbx_proto & ECT_MBXPROT_SOE) != 0;
     }
 
+    // Register the PRE-OP configuration hook. ecx_config_map_group calls it per
+    // slave, after PRE-OP is confirmed and before it reads the PDO mapping —
+    // which is the only window where a sync manager reassignment both works and
+    // is seen by the mapping. See Bus::preop_hook.
+    if (!cfg_.preop.empty()) {
+        ctx_.userdata = this;
+        for (int i = 1; i <= slave_count_; i++) {
+            ctx_.slavelist[i].PO2SOconfig = &Bus::preop_hook;
+        }
+    }
+
     iomap_size_ = ecx_config_map_group(&ctx_, iomap_, 0);
+
+    // Check this BEFORE the mapping size. SOEM ignores the hook's return value
+    // and carries on, so a refused write shows up as a plausible-looking image
+    // built from the mapping we failed to replace — reporting "MappingFailed",
+    // or nothing at all, would send the reader hunting in the wrong place.
+    if (preop_failed_) {
+        state_ = BusState::Fault;
+        return BusResult::PreOpConfigFailed;
+    }
+
     if (iomap_size_ <= 0 || iomap_size_ > kIoMapBytes) {
         state_ = BusState::Fault;
         return BusResult::MappingFailed;
@@ -541,6 +700,37 @@ bool Bus::read_sdo_i8(int slave, std::uint16_t index, std::uint8_t subindex,
                       std::int8_t& value) noexcept {
     int size = static_cast<int>(sizeof(value));
     return read_sdo(slave, index, subindex, &value, size) && size == sizeof(value);
+}
+
+bool Bus::write_sdo(int slave, std::uint16_t index, std::uint8_t subindex, const void* data,
+                    int size) noexcept {
+    if (state_ == BusState::Closed || slave < 1 || slave > slave_count_ || data == nullptr ||
+        size <= 0) {
+        return false;
+    }
+    // ecx_SDOwrite does not modify the buffer, but takes it non-const.
+    return ecx_SDOwrite(&ctx_, static_cast<std::uint16_t>(slave), index, subindex, FALSE, size,
+                        const_cast<void*>(data), EC_TIMEOUTRXM) > 0;
+}
+
+bool Bus::write_sdo_u8(int slave, std::uint16_t index, std::uint8_t subindex,
+                       std::uint8_t value) noexcept {
+    return write_sdo(slave, index, subindex, &value, static_cast<int>(sizeof(value)));
+}
+
+bool Bus::write_sdo_u16(int slave, std::uint16_t index, std::uint8_t subindex,
+                        std::uint16_t value) noexcept {
+    return write_sdo(slave, index, subindex, &value, static_cast<int>(sizeof(value)));
+}
+
+bool Bus::write_sdo_u32(int slave, std::uint16_t index, std::uint8_t subindex,
+                        std::uint32_t value) noexcept {
+    return write_sdo(slave, index, subindex, &value, static_cast<int>(sizeof(value)));
+}
+
+bool Bus::write_sdo_i8(int slave, std::uint16_t index, std::uint8_t subindex,
+                       std::int8_t value) noexcept {
+    return write_sdo(slave, index, subindex, &value, static_cast<int>(sizeof(value)));
 }
 
 void Bus::close() noexcept {

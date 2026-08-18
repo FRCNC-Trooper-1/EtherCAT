@@ -378,6 +378,12 @@ void usage(const char* argv0) {
         "  --shift <us>    Sync0 shift (default: 25%% of cycle)\n"
         "  --no-dc         skip Distributed Clocks configuration\n"
         "  --block-lrw     force LRD/LWR instead of LRW (Yaskawa Sigma-7)\n"
+        "  --rx-pdo <idx>  assign this mapping to 0x1C12 in PRE-OP, e.g. 0x1600\n"
+        "  --tx-pdo <idx>  assign this mapping to 0x1C13 in PRE-OP, e.g. 0x1A00\n"
+        "\n"
+        "The scan is read-only unless --rx-pdo/--tx-pdo are given, which WRITE\n"
+        "the drive's PDO assignment. Use them to see what a candidate mapping\n"
+        "actually yields before committing a machine to it.\n"
         "\n"
         "Must run as root (raw socket). Works with zero slaves connected —\n"
         "that still validates the NIC, socket and driver path.\n",
@@ -414,6 +420,13 @@ int main(int argc, char** argv) {
             cfg.use_dc = false;
         } else if (std::strcmp(argv[i], "--block-lrw") == 0) {
             cfg.force_block_lrw = true;
+        } else if (std::strcmp(argv[i], "--rx-pdo") == 0 && i + 1 < argc) {
+            // Base 0: mapping objects are quoted in hex everywhere they appear.
+            cfg.preop.rx_pdo_assign =
+                static_cast<std::uint16_t>(std::strtol(argv[++i], nullptr, 0));
+        } else if (std::strcmp(argv[i], "--tx-pdo") == 0 && i + 1 < argc) {
+            cfg.preop.tx_pdo_assign =
+                static_cast<std::uint16_t>(std::strtol(argv[++i], nullptr, 0));
         } else {
             usage(argv[0]);
             return 2;
@@ -466,6 +479,13 @@ int main(int argc, char** argv) {
     }
     if (r != BusResult::Ok) {
         std::fprintf(stderr, "configure() failed: %s\n", to_string(r));
+        if (r == BusResult::PreOpConfigFailed) {
+            std::fprintf(stderr, "  %s\n", bus->preop_error());
+            std::fprintf(stderr,
+                         "  The drive refused the write, or accepted it and kept its own\n"
+                         "  value. Either way the mapping is NOT what was asked for --\n"
+                         "  re-run without --rx-pdo/--tx-pdo to see what it does support.\n");
+        }
         if (r == BusResult::NoDistributedClocks) {
             std::fprintf(stderr, "  No slave reported DC capability. Retry with --no-dc,\n");
             std::fprintf(stderr, "  but note coordinated multi-axis motion requires DC.\n");

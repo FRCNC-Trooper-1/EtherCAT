@@ -63,6 +63,9 @@ struct Options {
     long dc_lock_cycles = 0;    ///< 0 keeps the DcSync default
     long rx_timeout_us = 0;     ///< 0 derives from the cycle
     long dc_timeout_ms = 0;     ///< 0 keeps the CyclicTask default
+    long rx_pdo = 0;            ///< 0 keeps the drive's own assignment
+    long tx_pdo = 0;
+    bool set_interp = false;
     bool block_lrw = false;
     bool no_dc = false;
 };
@@ -83,8 +86,12 @@ void usage() {
         "  --dc-timeout N  milliseconds to wait for DC lock before failing (10000)\n"
         "  --block-lrw     force LRD/LWR instead of LRW (Yaskawa Sigma-7)\n"
         "  --no-dc         run without distributed clocks (diagnostics only)\n"
+        "  --rx-pdo N      assign this mapping to 0x1C12 in PRE-OP, e.g. 0x1600\n"
+        "  --tx-pdo N      assign this mapping to 0x1C13 in PRE-OP, e.g. 0x1A00\n"
+        "  --set-interp    write 0x60C2 to match the cycle, and verify it took\n"
         "\n"
-        "Never enables an axis. Safe with no motors connected.\n");
+        "The last three CHANGE THE DRIVE'S CONFIGURATION. Everything else here\n"
+        "is read-only. Never enables an axis; safe with no motors connected.\n");
 }
 
 bool parse_slaves(const char* s, int* slave) {
@@ -124,6 +131,10 @@ bool parse_args(int argc, char** argv, Options& o) {
             o.no_dc = true;
             continue;
         }
+        if (std::strcmp(a, "--set-interp") == 0) {
+            o.set_interp = true;
+            continue;
+        }
         if (i + 1 >= argc) {
             std::printf("missing value for %s\n", a);
             return false;
@@ -137,14 +148,23 @@ bool parse_args(int argc, char** argv, Options& o) {
             continue;
         }
 
+        // Base 0 so PDO mapping indices can be given the way the manual prints
+        // them, as 0x1600 rather than 5632.
+        const bool hex_ok =
+            std::strcmp(a, "--rx-pdo") == 0 || std::strcmp(a, "--tx-pdo") == 0;
+
         char* end = nullptr;
-        const long n = std::strtol(v, &end, 10);
+        const long n = std::strtol(v, &end, hex_ok ? 0 : 10);
         if (end == v || *end != '\0') {
             std::printf("bad value for %s: %s\n", a, v);
             return false;
         }
 
-        if (std::strcmp(a, "--axes") == 0) {
+        if (std::strcmp(a, "--rx-pdo") == 0) {
+            o.rx_pdo = n;
+        } else if (std::strcmp(a, "--tx-pdo") == 0) {
+            o.tx_pdo = n;
+        } else if (std::strcmp(a, "--axes") == 0) {
             o.axes = static_cast<int>(n);
         } else if (std::strcmp(a, "--cycle") == 0) {
             o.cycle_us = n;
@@ -176,10 +196,48 @@ bool parse_args(int argc, char** argv, Options& o) {
         std::printf("--cycle below 50 us is not credible on any PC\n");
         return false;
     }
+    if (o.rx_pdo != 0 && (o.rx_pdo < 0x1600 || o.rx_pdo > 0x17FF)) {
+        std::printf("--rx-pdo must be an RxPDO mapping object, 0x1600..0x17FF\n");
+        return false;
+    }
+    if (o.tx_pdo != 0 && (o.tx_pdo < 0x1A00 || o.tx_pdo > 0x1BFF)) {
+        std::printf("--tx-pdo must be a TxPDO mapping object, 0x1A00..0x1BFF\n");
+        return false;
+    }
     if (o.interval_ms < 50) {
         o.interval_ms = 50;
     }
     return true;
+}
+
+/// What the drive actually ended up mapping, read back off the device.
+///
+/// Worth printing even when no reassignment was asked for: it is the difference
+/// between "CSP works" and "CSP works and the supervisor can see mode, following
+/// error and torque", and it is the only honest confirmation that --rx-pdo did
+/// anything.
+void print_pdo_map(const fieldbus::AxisPdoMap& m, int slave) {
+    struct Named {
+        const char* name;
+        bool present;
+    };
+    const Named entries[] = {
+        {"0x6060 mode", m.modes_of_operation.present()},
+        {"0x60B1 vel-ff", m.velocity_offset.present()},
+        {"0x60B2 trq-ff", m.torque_offset.present()},
+        {"0x6061 mode-disp", m.modes_display.present()},
+        {"0x60F4 foll-err", m.following_error.present()},
+        {"0x606C vel-act", m.velocity_actual.present()},
+        {"0x6077 trq-act", m.torque_actual.present()},
+    };
+
+    std::printf("  slave %-2d  %u out / %u in bytes  CSP %s\n", slave, m.rx_bytes, m.tx_bytes,
+                m.usable_for_csp() ? "usable" : "NOT USABLE");
+    std::printf("            optional:");
+    for (const Named& e : entries) {
+        std::printf("  %s %s", e.present ? "+" : "-", e.name);
+    }
+    std::printf("\n");
 }
 
 void print_axis_line(const ipc::MachineStatus& s, int i, int slave) {
@@ -222,6 +280,9 @@ int main(int argc, char** argv) {
     if (o.dc_timeout_ms > 0) {
         cfg.dc_lock_timeout_ms = static_cast<std::uint32_t>(o.dc_timeout_ms);
     }
+    cfg.bus.preop.rx_pdo_assign = static_cast<std::uint16_t>(o.rx_pdo);
+    cfg.bus.preop.tx_pdo_assign = static_cast<std::uint16_t>(o.tx_pdo);
+    cfg.bus.preop.set_interpolation_period = o.set_interp;
 
     cfg.rt.cpu = o.cpu;
     cfg.machine.axis_count = o.axes;
@@ -239,6 +300,22 @@ int main(int argc, char** argv) {
     std::printf("opening %s, %d axes, %" PRId64 " us cycle, DC %s\n", o.interface, o.axes,
                 o.cycle_us, o.no_dc ? "off" : "on");
 
+    if (!cfg.bus.preop.empty()) {
+        std::printf("PRE-OP writes:");
+        if (o.rx_pdo != 0) {
+            std::printf("  0x1C12 <- 0x%04lX", static_cast<unsigned long>(o.rx_pdo));
+        }
+        if (o.tx_pdo != 0) {
+            std::printf("  0x1C13 <- 0x%04lX", static_cast<unsigned long>(o.tx_pdo));
+        }
+        if (o.set_interp) {
+            const fieldbus::InterpolationPeriod p =
+                fieldbus::encode_interpolation_period(cfg.bus.cycle_ns);
+            std::printf("  0x60C2 <- %u e%d", p.units, p.exponent);
+        }
+        std::printf("\n");
+    }
+
     const fieldbus::BusResult r = task->start(cfg);
     if (r != fieldbus::BusResult::Ok) {
         std::printf("start failed: %s\n  %s\n", fieldbus::to_string(r), task->error());
@@ -253,6 +330,13 @@ int main(int argc, char** argv) {
 
     std::printf("%d slaves found, rx timeout %d us.\n", task->bus().slave_count(),
                 task->bus().rx_timeout_us());
+
+    for (int i = 0; i < o.axes; i++) {
+        const fieldbus::SlaveInfo& si = task->bus().slave(o.slave[i]);
+        if (si.pdo_discovered) {
+            print_pdo_map(si.pdo, o.slave[i]);
+        }
+    }
 
     // Zero the slaves' own error counters so what we read at the end describes
     // THIS run, not everything since the drives were last powered up.

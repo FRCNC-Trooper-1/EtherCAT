@@ -21,6 +21,7 @@
 
 #include "frcnc/fieldbus/dc_sync.hpp"
 #include "frcnc/fieldbus/pdo_map.hpp"
+#include "frcnc/fieldbus/preop_config.hpp"
 
 #include "soem/soem.h"
 
@@ -50,6 +51,7 @@ enum class BusResult : std::uint8_t {
     SafeOpFailed,
     OperationalFailed,
     DcNotLocked,       ///< go_operational() called before DC settled
+    PreOpConfigFailed, ///< a PRE-OP SDO write was refused; see preop_error()
 };
 
 [[nodiscard]] const char* to_string(BusResult r) noexcept;
@@ -121,6 +123,10 @@ struct BusConfig {
     ///
     /// Cycling (CyclicTask): leave it at 4. Scanning only (bus_scan): set 0.
     int mailbox_per_cycle = 4;
+
+    /// SDO writes applied to every slave in PRE-OP, before the process image is
+    /// mapped. See preop_config.hpp for why that moment and no other.
+    PreOpConfig preop{};
 
     DcSyncConfig dc{};
 };
@@ -336,12 +342,56 @@ public:
     [[nodiscard]] bool read_sdo_i8(int slave, std::uint16_t index, std::uint8_t subindex,
                                    std::int8_t& value) noexcept;
 
+    /// Write an object over SDO. Same real-time caveat as read_sdo().
+    ///
+    /// Most drive parameters are only writable in PRE-OP, and anything that
+    /// changes the process data length is only writable there. Prefer
+    /// BusConfig::preop, which applies writes at the one moment in the bring-up
+    /// where both are true; this is the escape hatch for everything else.
+    [[nodiscard]] bool write_sdo(int slave, std::uint16_t index, std::uint8_t subindex,
+                                 const void* data, int size) noexcept;
+
+    [[nodiscard]] bool write_sdo_u8(int slave, std::uint16_t index, std::uint8_t subindex,
+                                    std::uint8_t value) noexcept;
+    [[nodiscard]] bool write_sdo_u16(int slave, std::uint16_t index, std::uint8_t subindex,
+                                     std::uint16_t value) noexcept;
+    [[nodiscard]] bool write_sdo_u32(int slave, std::uint16_t index, std::uint8_t subindex,
+                                     std::uint32_t value) noexcept;
+    [[nodiscard]] bool write_sdo_i8(int slave, std::uint16_t index, std::uint8_t subindex,
+                                    std::int8_t value) noexcept;
+
+    /// Why the PRE-OP configuration failed, or an empty string if it did not.
+    ///
+    /// Carried separately from the BusResult because "a write was refused" is
+    /// useless on its own: which slave, which object, and whether it was
+    /// refused outright or silently ignored are the whole diagnosis.
+    [[nodiscard]] const char* preop_error() const noexcept { return preop_error_; }
+
     /// Drain SOEM's error list into a caller buffer. Not real-time.
     /// @return number of characters written, excluding the terminator.
     std::size_t drain_errors(char* buffer, std::size_t capacity) noexcept;
 
 private:
     BusResult discover_pdo_map(int slave) noexcept;
+
+    /// SOEM's PRE-OP -> SAFE-OP slave configuration hook.
+    ///
+    /// This is the only correct place for these writes, and the reason is
+    /// ordering inside SOEM rather than preference: ecx_map_coe_soe waits for
+    /// PRE-OP (so the mailbox is live — direct reads immediately after
+    /// ecx_config_init are not), calls this hook, and only THEN reads the PDO
+    /// mapping to compute the process data length. A sync manager reassignment
+    /// made here is therefore reflected in the image SOEM builds; the same
+    /// write a few lines later in configure() would not be.
+    ///
+    /// Recovers the Bus from ctx->userdata, which SOEM never touches.
+    static int preop_hook(ecx_contextt* ctx, std::uint16_t slave) noexcept;
+
+    int apply_preop(int slave) noexcept;
+    bool assign_pdo(int slave, std::uint16_t assign_index, std::uint16_t mapping_index) noexcept;
+    bool apply_interpolation_period(int slave) noexcept;
+    void fail_preop(int slave, const char* what, std::uint16_t index,
+                    std::uint8_t subindex) noexcept;
 
     BusConfig cfg_{};
     BusState state_ = BusState::Closed;
@@ -357,6 +407,9 @@ private:
     DcSync dc_{};
     bool dc_available_ = false;
     bool cyclic_mailbox_ = false;
+
+    char preop_error_[160] = {};
+    bool preop_failed_ = false;
 
     int expected_wkc_ = 0;
     int rx_timeout_us_ = 250;
