@@ -174,6 +174,25 @@ All are usable at 4 ms and none at 1 ms or below.
 The best of the three still loses roughly one frame in a hundred at 1 ms. For
 context, the acceptance criterion is **zero** over 24 hours.
 
+#### Usable bench configuration, pending the Intel NIC
+
+At a **4 ms** cycle the RTL8126A (card #2) is good enough to develop against:
+
+| | Result over 60 s |
+|---|---|
+| DC | **acquired lock**, best run 181 cycles |
+| Bus | reached and stayed **OPERATIONAL** |
+| Loss | 18 / 15,000 = **0.12 %**, with 30 s stretches of zero |
+| Overruns | 0, mean jitter 4.5 µs |
+
+DC needed ~17 s to pull in, past the 10 s default — `--dc-timeout 30000`.
+
+This is **not** an acceptance pass: lock is acquired but not sustained, and the
+loss rate is not zero. It is a working rig for Phase 3, where cycle time affects
+none of what is being validated — scaling, direction, PDO offsets, the CiA 402
+enable sequence, the coordinated stop. Production cycle rates and the 24 hour
+soak still require the Intel NIC.
+
 The host is not implicated, and was measured rather than assumed:
 
 - **Timing is fine.** 3.5 µs mean jitter and 9.8 µs max at a **250 µs** cycle,
