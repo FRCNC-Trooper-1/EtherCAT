@@ -44,8 +44,20 @@ struct DcSyncConfig {
     /// cannot produce a large sleep adjustment.
     std::int64_t max_correction_ns = 100'000;
 
-    /// Phase error considered "in lock".
-    std::int64_t lock_tolerance_ns = 1'000;
+    /// Phase error considered "in lock". 0 derives it from the cycle.
+    ///
+    /// This CANNOT sensibly be a constant across cycle times. Clock rate error
+    /// between master and reference slave accumulates in TIME, so four times the
+    /// cycle means four times the phase drift between corrections and roughly
+    /// four times the residual ripple. Measured on a real segment: a few hundred
+    /// nanoseconds of error at 1 ms became 1-4 us at 4 ms, with the frame loss
+    /// twelve times LOWER -- so a fixed 1 us tolerance that is nearly achievable
+    /// at 1 ms is simply unreachable at 4 ms, and the failure looks like a bus
+    /// problem rather than a badly posed threshold.
+    ///
+    /// Derived default is cycle/1000 with a 1 us floor: 1 us at 250 us and 1 ms,
+    /// 4 us at 4 ms. Set explicitly to override.
+    std::int64_t lock_tolerance_ns = 0;
 
     /// Consecutive in-tolerance cycles required before locked() reports true.
     std::uint32_t lock_cycles = 100;
@@ -65,8 +77,24 @@ public:
     /// Phase error from the last update. Zero means perfectly in phase.
     [[nodiscard]] std::int64_t error_ns() const noexcept { return error_ns_; }
 
-    /// Largest absolute phase error observed since reset.
+    /// Largest absolute phase error observed since reset, INCLUDING the initial
+    /// pull-in. Use peak_error_since_lock_ns() to judge a running bus.
     [[nodiscard]] std::int64_t peak_error_ns() const noexcept { return peak_error_ns_; }
+
+    /// Largest absolute phase error since lock was first achieved.
+    ///
+    /// The distinction is not cosmetic. Before lock the controller is hunting,
+    /// and a large excursion there is the pull-in doing its job; after lock it
+    /// is an excursion of a synchronised bus, which is the number that has to be
+    /// compared against the Sync0 shift. Reporting only the combined peak makes
+    /// a clean run look alarming — a 261 us pull-in transient and a 261 us
+    /// excursion twenty seconds into OPERATIONAL are the same number and
+    /// completely different findings.
+    ///
+    /// Zero until lock is first achieved.
+    [[nodiscard]] std::int64_t peak_error_since_lock_ns() const noexcept {
+        return peak_error_since_lock_ns_;
+    }
 
     /// Correction applied on the last update.
     [[nodiscard]] std::int64_t correction_ns() const noexcept { return correction_ns_; }
@@ -85,6 +113,24 @@ public:
     /// Consecutive in-tolerance cycles so far.
     [[nodiscard]] std::uint32_t lock_run() const noexcept { return in_tolerance_run_; }
 
+    /// Has lock EVER been achieved, regardless of the current state?
+    ///
+    /// Acquiring lock and holding it are different questions with different
+    /// answers. Acquisition is what gates OPERATIONAL and has to be strict.
+    /// Holding it is a matter of degree: once the slaves are in OP their Sync0
+    /// pulses come from the distributed clock in hardware, so a momentary
+    /// excursion in the MASTER's cycle phase costs nothing as long as the frame
+    /// still arrives before Sync0 fires. Reporting only the instantaneous state
+    /// makes a bus that locked, went operational and is running normally look
+    /// like one that never locked at all.
+    [[nodiscard]] bool ever_locked() const noexcept { return ever_locked_; }
+
+    /// Longest run of in-tolerance cycles ever achieved. When lock never
+    /// happens this says whether the controller was close or nowhere near --
+    /// a peak of 90 against a requirement of 100 is a different problem from a
+    /// peak of 3.
+    [[nodiscard]] std::uint32_t peak_lock_run() const noexcept { return peak_lock_run_; }
+
     void reset() noexcept;
 
 private:
@@ -93,9 +139,12 @@ private:
     double integral_ = 0.0;
     std::int64_t error_ns_ = 0;
     std::int64_t peak_error_ns_ = 0;
+    std::int64_t peak_error_since_lock_ns_ = 0;
     std::int64_t correction_ns_ = 0;
     std::uint64_t cycles_ = 0;
     std::uint32_t in_tolerance_run_ = 0;
+    std::uint32_t peak_lock_run_ = 0;
+    bool ever_locked_ = false;
 };
 
 /// Phase error of `dc_time` relative to the cycle, folded into

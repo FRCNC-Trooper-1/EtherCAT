@@ -45,6 +45,19 @@ struct AxisPdoMap {
     PdoEntry torque_offset;       ///< 0x60B2, torque feedforward
     PdoEntry touch_probe_function;///< 0x60B8
 
+    /// 0x6072, max torque, per mille of rated.
+    ///
+    /// The one RxPDO entry that is DANGEROUS TO LEAVE ALONE. A richer mapping
+    /// such as Yaskawa's 0x1600 includes it, and everything in the process
+    /// image starts at zero — so a master that maps it and does not write it
+    /// commands a torque limit of zero on every cycle. The axis then enables,
+    /// reports "internal limit active", and does not move.
+    ///
+    /// Its neighbours in the same mapping do not have this problem: 0x60FF
+    /// target velocity and 0x6071 target torque are ignored by the drive while
+    /// it is in CSP, so leaving them at zero costs nothing.
+    PdoEntry max_torque;
+
     // TxPDO — drive to master
     PdoEntry statusword;          ///< 0x6041, required
     PdoEntry position_actual;     ///< 0x6064, required for CSP

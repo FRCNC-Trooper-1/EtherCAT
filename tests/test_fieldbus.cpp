@@ -9,6 +9,7 @@
 
 #include "frcnc/fieldbus/dc_sync.hpp"
 #include "frcnc/fieldbus/pdo_map.hpp"
+#include "frcnc/fieldbus/preop_config.hpp"
 
 #include <cmath>
 #include <cstdio>
@@ -93,7 +94,7 @@ void test_full_yaskawa_mapping() {
     CHECK(b.add_raw(0x607A0020u));  // target position   @2,  4
     CHECK(b.add_raw(0x60FF0020u));  // target velocity   @6,  4  (not tracked)
     CHECK(b.add_raw(0x60710010u));  // target torque     @10, 2  (not tracked)
-    CHECK(b.add_raw(0x60720010u));  // max torque        @12, 2  (not tracked)
+    CHECK(b.add_raw(0x60720010u));  // max torque        @12, 2
     CHECK(b.add_raw(0x60600008u));  // modes of op       @14, 1
     CHECK(b.add_raw(0x60B80010u));  // touch probe fn    @15, 2
     b.end();
@@ -104,6 +105,30 @@ void test_full_yaskawa_mapping() {
     CHECK(m.modes_of_operation.byte_offset == 14);
     CHECK(m.touch_probe_function.byte_offset == 15);
     CHECK(m.rx_bytes == 17);
+
+    // 0x6072 must be LOCATED, because a mapped max torque left unwritten is a
+    // commanded torque limit of zero. The bench drives report 18 output bytes
+    // for this mapping rather than 17, so there is a trailing pad byte on real
+    // hardware -- which is exactly why the offsets are discovered and not
+    // assumed.
+    CHECK(m.max_torque.present());
+    CHECK(m.max_torque.byte_offset == 12);
+    CHECK(m.max_torque.bit_length == 16);
+}
+
+void test_minimal_mapping_does_not_locate_max_torque() {
+    // The drive's own default assignment (0x1601) does not carry 0x6072, so
+    // the entry must stay invalid rather than defaulting to offset 0 -- which
+    // would write the torque limit straight over the controlword.
+    PdoMapBuilder b;
+    b.begin(PdoDirection::Rx);
+    CHECK(b.add_raw(0x60400010u));
+    CHECK(b.add_raw(0x607A0020u));
+    b.end();
+
+    CHECK(!b.result().max_torque.present());
+    CHECK(b.result().controlword.byte_offset == 0);
+    CHECK(b.result().target_position.byte_offset == 2);
 }
 
 void test_padding_shifts_following_entries() {
@@ -433,12 +458,245 @@ void test_zero_cycle_config_is_safe() {
 
 }  // namespace
 
+void test_dc_lock_tolerance_scales_with_the_cycle() {
+    // A constant tolerance is wrong across cycle times: the drift to be
+    // rejected between corrections is proportional to the cycle, so the
+    // residual ripple is too. Measured on hardware -- a few hundred ns of error
+    // at 1 ms became 1-4 us at 4 ms with TWELVE TIMES less frame loss, so the
+    // fixed 1 us threshold made a healthier bus look like a failing one.
+    struct Case {
+        std::int64_t cycle_ns;
+        std::int64_t expect_tolerance_ns;
+    };
+    const Case cases[] = {
+        {250'000, 1'000},    // floor applies
+        {1'000'000, 1'000},  // floor applies
+        {4'000'000, 4'000},  // scales
+        {8'000'000, 8'000},
+    };
+
+    for (const Case& c : cases) {
+        DcSyncConfig cfg;
+        cfg.cycle_ns = c.cycle_ns;
+        cfg.lock_tolerance_ns = 0;  // derive
+        cfg.lock_cycles = 1;
+
+        DcSync dc;
+        dc.configure(cfg);
+
+        // Just inside tolerance locks; just outside does not.
+        const std::int64_t inside = c.expect_tolerance_ns - 1;
+        (void)dc.update(cfg.shift_ns + inside);
+        CHECK(dc.locked());
+
+        DcSync dc2;
+        dc2.configure(cfg);
+        const std::int64_t outside = c.expect_tolerance_ns + 1;
+        (void)dc2.update(cfg.shift_ns + outside);
+        CHECK(!dc2.locked());
+    }
+}
+
+void test_dc_explicit_lock_tolerance_is_honoured() {
+    DcSyncConfig cfg;
+    cfg.cycle_ns = 4'000'000;
+    cfg.lock_tolerance_ns = 500;  // pinned, must not be widened to 4000
+    cfg.lock_cycles = 1;
+
+    DcSync dc;
+    dc.configure(cfg);
+    (void)dc.update(cfg.shift_ns + 600);
+    CHECK(!dc.locked());
+}
+
+// --- 0x60C2 interpolation time period ---------------------------------------
+//
+// The only value in the PRE-OP configuration that is computed rather than
+// copied, and getting it wrong is invisible: the bus comes up, the axis moves,
+// and every commanded feed is out by exactly the ratio of the two periods.
+
+void test_interpolation_period_round_trips() {
+    // Whatever the encoding chooses, it must mean the period it was given.
+    for (std::int64_t ns : {125'000LL, 250'000LL, 500'000LL, 1'000'000LL, 2'000'000LL,
+                            4'000'000LL, 1'500'000LL, 10'000'000LL}) {
+        const InterpolationPeriod p = encode_interpolation_period(ns);
+        CHECK(p.valid);
+        CHECK(p.to_ns() == ns);
+    }
+}
+
+void test_interpolation_period_uses_the_forms_drives_report() {
+    // Whole milliseconds in the (n, -3) form, sub-millisecond in microseconds.
+    // Matching what the device itself reports is what makes a readback
+    // comparison legible in a log.
+    const InterpolationPeriod ms4 = encode_interpolation_period(4'000'000);
+    CHECK(ms4.units == 4);
+    CHECK(ms4.exponent == -3);
+
+    const InterpolationPeriod us125 = encode_interpolation_period(125'000);
+    CHECK(us125.units == 125);
+    CHECK(us125.exponent == -6);
+
+    const InterpolationPeriod us250 = encode_interpolation_period(250'000);
+    CHECK(us250.units == 250);
+    CHECK(us250.exponent == -6);
+}
+
+void test_interpolation_period_coarsens_when_the_byte_forces_it() {
+    // 500 us cannot be (500, -6): 0x60C2:01 is UNSIGNED8. It must coarsen a
+    // decade rather than truncate, overflow, or claim success.
+    const InterpolationPeriod p = encode_interpolation_period(500'000);
+    CHECK(p.valid);
+    CHECK(p.units == 50);
+    CHECK(p.exponent == -5);
+    CHECK(p.to_ns() == 500'000);
+}
+
+void test_interpolation_period_rejects_what_it_cannot_represent() {
+    // Sub-microsecond, and a period needing more significant digits than a
+    // byte holds. Refusing is the only safe answer -- a rounded value would
+    // make every feed wrong by a fraction nobody would think to look for.
+    CHECK(!encode_interpolation_period(1'500).valid);   // 1.5 us
+    CHECK(!encode_interpolation_period(0).valid);
+    CHECK(!encode_interpolation_period(-1'000'000).valid);
+    CHECK(!encode_interpolation_period(1'234'000).valid);  // 1234 us
+    CHECK(encode_interpolation_period(-1'000'000).to_ns() == 0);
+}
+
+// --- composed PDO mappings --------------------------------------------------
+
+void test_mapping_entries_use_the_wire_encoding() {
+    // The same 32-bit layout the drive reports back, so a composed mapping and
+    // a discovered one are directly comparable. Getting this backwards would
+    // write a valid-looking mapping for entirely different objects.
+    PdoMapping m;
+    m.index = 0x1602;
+    CHECK(m.add(0x6040, 0x00, 16));
+    CHECK(m.add(0x60B1, 0x00, 32));
+
+    CHECK(m.entry[0] == 0x60400010u);
+    CHECK(m.entry[1] == 0x60B10020u);
+    CHECK(m.entry_count == 2);
+    CHECK(m.total_bits() == 48);
+    CHECK(!m.empty());
+}
+
+void test_mapping_rejects_nonsense_and_is_bounded() {
+    PdoMapping m;
+    m.index = 0x1602;
+    CHECK(!m.add(0x0000, 0x00, 16));  // padding is not something we compose
+    CHECK(!m.add(0x6040, 0x00, 0));   // zero-width entry
+    CHECK(m.entry_count == 0);
+
+    for (int i = 0; i < PdoMapping::kMaxEntries; i++) {
+        CHECK(m.add(0x6040, static_cast<std::uint8_t>(i), 8));
+    }
+    CHECK(!m.add(0x6040, 0x00, 8));
+    CHECK(m.entry_count == PdoMapping::kMaxEntries);
+}
+
+void test_mapping_with_no_index_is_empty() {
+    // entry_count alone must not arm the composer: writing entries into
+    // mapping object 0x0000 would be a write to nowhere.
+    PdoMapping m;
+    CHECK(m.add(0x6040, 0x00, 16));
+    CHECK(m.empty());
+}
+
+void test_csp_mapping_carries_what_the_predefined_ones_do_not() {
+    // The reason this exists at all: neither 0x1600 nor 0x1601 on the bench
+    // drives carries 0x60B1, so feedforward is unreachable by reassignment.
+    PdoMapping rx;
+    PdoMapping tx;
+    make_csp_mapping(rx, tx, 0x1602, 0x1A02);
+
+    CHECK(rx.index == 0x1602);
+    CHECK(tx.index == 0x1A02);
+
+    bool has_velocity_offset = false;
+    for (int i = 0; i < rx.entry_count; i++) {
+        has_velocity_offset |= (rx.entry[i] >> 16) == 0x60B1;
+    }
+    CHECK(has_velocity_offset);
+
+    // 6040 + 607A + 60B1 + 60B2 + 6060 = 2 + 4 + 4 + 2 + 1
+    CHECK(rx.total_bits() == 13 * 8);
+    // 6041 + 6064 + 606C + 60F4 + 6077 + 6061 = 2 + 4 + 4 + 4 + 2 + 1
+    CHECK(tx.total_bits() == 17 * 8);
+
+    // 0x6072 is deliberately absent: composing our own means the torque limit
+    // stays in the drive's parameters rather than becoming an obligation on
+    // the master every cycle.
+    for (int i = 0; i < rx.entry_count; i++) {
+        CHECK((rx.entry[i] >> 16) != 0x6072);
+    }
+}
+
+void test_composed_mapping_implies_its_own_assignment() {
+    // A composed mapping must not need rx_pdo_assign set as well; forgetting
+    // it would write the mapping and then leave the drive using a different one.
+    PreOpConfig cfg;
+    CHECK(cfg.empty());
+    make_csp_mapping(cfg.rx_mapping, cfg.tx_mapping, 0x1602, 0x1A02);
+
+    CHECK(!cfg.empty());
+    CHECK(cfg.effective_rx_assign() == 0x1602);
+    CHECK(cfg.effective_tx_assign() == 0x1A02);
+
+    // An explicit assignment still works on its own.
+    PreOpConfig plain;
+    plain.rx_pdo_assign = 0x1600;
+    CHECK(plain.effective_rx_assign() == 0x1600);
+    CHECK(plain.effective_tx_assign() == 0);
+}
+
+void test_preop_config_starts_empty_and_records_writes() {
+    PreOpConfig cfg;
+    CHECK(cfg.empty());
+
+    cfg.rx_pdo_assign = 0x1600;
+    CHECK(!cfg.empty());
+
+    PreOpConfig other;
+    CHECK(other.add(SdoWrite{2, 0x6098, 0x00, 1, 35}));
+    CHECK(other.write_count == 1);
+    CHECK(!other.empty());
+
+    // Malformed writes are refused rather than stored: a zero-width SDO write
+    // is not a smaller write, it is a bug.
+    CHECK(!other.add(SdoWrite{1, 0x6040, 0x00, 3, 0}));
+    CHECK(!other.add(SdoWrite{1, 0x6040, 0x00, 0, 0}));
+    CHECK(other.write_count == 1);
+}
+
+void test_preop_write_targets_one_slave_or_all() {
+    const SdoWrite everywhere{0, 0x60C2, 0x01, 1, 4};
+    CHECK(everywhere.applies_to(1));
+    CHECK(everywhere.applies_to(7));
+
+    const SdoWrite just_two{2, 0x60C2, 0x01, 1, 4};
+    CHECK(!just_two.applies_to(1));
+    CHECK(just_two.applies_to(2));
+}
+
+void test_preop_write_table_is_bounded() {
+    PreOpConfig cfg;
+    for (int i = 0; i < PreOpConfig::kMaxWrites; i++) {
+        CHECK(cfg.add(SdoWrite{0, 0x2000, static_cast<std::uint8_t>(i), 2, 1}));
+    }
+    CHECK(!cfg.add(SdoWrite{0, 0x2000, 0x00, 2, 1}));
+    CHECK(cfg.write_count == PreOpConfig::kMaxWrites);
+}
+
 int main() {
+    test_dc_lock_tolerance_scales_with_the_cycle();
+    test_dc_explicit_lock_tolerance_is_honoured();
     std::printf("test_fieldbus\n");
 
     test_decode_mapping_entry();
     test_minimal_csp_mapping();
     test_full_yaskawa_mapping();
+    test_minimal_mapping_does_not_locate_max_torque();
     test_padding_shifts_following_entries();
     test_feedforward_entries_are_located();
     test_missing_required_object_is_detected();
@@ -462,6 +720,19 @@ int main() {
     test_locked_is_a_pure_query();
     test_peak_error_is_retained();
     test_zero_cycle_config_is_safe();
+
+    test_interpolation_period_round_trips();
+    test_interpolation_period_uses_the_forms_drives_report();
+    test_interpolation_period_coarsens_when_the_byte_forces_it();
+    test_interpolation_period_rejects_what_it_cannot_represent();
+    test_mapping_entries_use_the_wire_encoding();
+    test_mapping_rejects_nonsense_and_is_bounded();
+    test_mapping_with_no_index_is_empty();
+    test_csp_mapping_carries_what_the_predefined_ones_do_not();
+    test_composed_mapping_implies_its_own_assignment();
+    test_preop_config_starts_empty_and_records_writes();
+    test_preop_write_targets_one_slave_or_all();
+    test_preop_write_table_is_bounded();
 
     std::printf("  %d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

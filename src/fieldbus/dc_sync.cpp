@@ -44,6 +44,18 @@ std::int64_t dc_phase_error(std::int64_t dc_time_ns, std::int64_t cycle_ns,
 
 void DcSync::configure(const DcSyncConfig& cfg) noexcept {
     cfg_ = cfg;
+
+    // Derive the lock tolerance from the cycle unless the caller pinned it.
+    // A constant threshold is wrong here: the drift the controller has to
+    // reject between corrections is proportional to the cycle, so the residual
+    // ripple is too. See the note on DcSyncConfig::lock_tolerance_ns.
+    if (cfg_.lock_tolerance_ns <= 0) {
+        cfg_.lock_tolerance_ns = cfg_.cycle_ns / 1000;
+        if (cfg_.lock_tolerance_ns < 1'000) {
+            cfg_.lock_tolerance_ns = 1'000;
+        }
+    }
+
     reset();
 }
 
@@ -51,9 +63,12 @@ void DcSync::reset() noexcept {
     integral_ = 0.0;
     error_ns_ = 0;
     peak_error_ns_ = 0;
+    peak_error_since_lock_ns_ = 0;
     correction_ns_ = 0;
     cycles_ = 0;
     in_tolerance_run_ = 0;
+    peak_lock_run_ = 0;
+    ever_locked_ = false;
 }
 
 std::int64_t DcSync::update(std::int64_t dc_time_ns) noexcept {
@@ -66,6 +81,11 @@ std::int64_t DcSync::update(std::int64_t dc_time_ns) noexcept {
     const std::int64_t magnitude = abs_i64(error_ns_);
     if (magnitude > peak_error_ns_) {
         peak_error_ns_ = magnitude;
+    }
+    // Tracked from the cycle AFTER lock was first achieved, so the pull-in
+    // transient is excluded rather than dominating the figure for ever.
+    if (ever_locked_ && magnitude > peak_error_since_lock_ns_) {
+        peak_error_since_lock_ns_ = magnitude;
     }
 
     integral_ += static_cast<double>(error_ns_);
@@ -92,6 +112,12 @@ std::int64_t DcSync::update(std::int64_t dc_time_ns) noexcept {
     if (magnitude <= cfg_.lock_tolerance_ns) {
         if (in_tolerance_run_ < 0xFFFFFFFFu) {
             in_tolerance_run_++;
+        }
+        if (in_tolerance_run_ > peak_lock_run_) {
+            peak_lock_run_ = in_tolerance_run_;
+        }
+        if (in_tolerance_run_ >= cfg_.lock_cycles) {
+            ever_locked_ = true;
         }
     } else {
         in_tolerance_run_ = 0;

@@ -110,7 +110,7 @@ The order matters. Each step depends on the previous one.
 
 ```c
 /* 1. Open the NIC. Nonzero return means success. */
-if (!ecx_init(&ctx, "enp3s0")) { /* fail */ }
+if (!ecx_init(&ctx, "<nic>")) { /* fail */ }
 
 /* 2. Enumerate. Returns the number of slaves found. */
 int nslaves = ecx_config_init(&ctx);
@@ -396,14 +396,96 @@ what you expect.
 
 ---
 
-## 10. Diagnostics
+## 10. Writing configuration in PRE-OP
+
+Two things must be settled before the process image exists, and both are only
+writable in PRE-OP:
+
+- **Sync manager PDO assignment** (`0x1C12` / `0x1C13`) — it determines the
+  process data length, and the length is fixed once the ESC's sync managers are
+  programmed for SAFE-OP.
+- **`0x60C2`, the interpolation time period** — CSP is a *timed* interface. The
+  drive interpolates between setpoints over exactly this period, so a value that
+  disagrees with the master's cycle makes every move come out at the wrong speed
+  by exactly the ratio of the two. Defaults are frequently **not** 1 ms; the
+  bench Sigma-X drives ship at 125 µs.
+
+### There is exactly one correct moment, and it is not obvious
+
+`ecx_config_init` **requests** PRE-OP but does not wait for it. SOEM's own
+`statecheck` for PRE-OP lives inside `ecx_map_coe_soe`, which does not run until
+`ecx_config_map_group`. So mailbox traffic issued immediately after
+`ecx_config_init` is aimed at a slave that may still be in INIT, where the
+mailbox is not active — measured on Sigma-X hardware, where identical SDO reads
+failed before the mapping and succeeded after it.
+
+But "after the mapping" is too late for anything that changes the process data
+length. The window is inside `ecx_map_coe_soe`, between the PRE-OP statecheck
+and `ecx_readPDOmap` — and SOEM exposes exactly that window as the
+`PO2SOconfig` hook:
+
+```
+ecx_config_map_group
+  └─ ecx_map_coe_soe (per slave)
+       ├─ ecx_statecheck(PRE_OP)      ← mailbox is now live
+       ├─ PO2SOconfig(ctx, slave)     ← write here
+       └─ ecx_readPDOmap              ← sizes computed from what you wrote
+```
+
+`Bus` registers `Bus::preop_hook` there and recovers itself from
+`ctx->userdata`, which SOEM never touches. Configure it through
+`BusConfig::preop`:
+
+```cpp
+cfg.preop.rx_pdo_assign = 0x1600;   // richer than the drive's default 0x1601
+cfg.preop.tx_pdo_assign = 0x1A00;
+cfg.preop.set_interpolation_period = true;   // 0x60C2 <- cfg.cycle_ns
+cfg.preop.add({.slave = 0, .index = 0x2000, .subindex = 0, .bytes = 2, .value = 1});
+```
+
+`--rx-pdo`, `--tx-pdo` and `--set-interp` expose the same thing from
+`bus_monitor`, `axis_jog` and (assignment only) `bus_scan`.
+
+### Assignment sequence
+
+`0x1C12`/`0x1C13` sub-entries are read-only while the assignment is active, so
+the count must be zeroed first:
+
+```
+0x1C12:00 <- 0            disable the assignment
+0x1C12:01 <- 0x1600       select the mapping
+0x1C12:00 <- 1            re-enable with one entry
+0x1C12:01 -> verify       read it back
+```
+
+**Read it back.** A drive that accepts the write and keeps its own mapping
+produces a bus that comes up perfectly and drives the axis using offsets taken
+from a mapping it is not using. Yaskawa is documented as silently ignoring SDO
+writes to PDO-mapped objects (see [`06`](06-vendor-notes.md)), which is the same
+class of failure.
+
+The same applies to `0x60C2`: both sub-indices are written and then read back and
+compared against the cycle in nanoseconds, because a drive that clamps the value
+to its own supported period rather than refusing the write leaves every axis
+running at a constant wrong fraction of commanded speed.
+
+### Failures are named, not just counted
+
+SOEM ignores the hook's return value and carries on, so a refused write would
+otherwise surface as a plausible-looking process image. `configure()` returns
+`PreOpConfigFailed` and `Bus::preop_error()` names the slave, the object and
+whether it was refused outright or silently ignored.
+
+---
+
+## 11. Diagnostics
 
 ### `slaveinfo`
 
 SOEM's own sample is the first tool to reach for:
 
 ```bash
-./extern/soem/build/samples/slaveinfo/slaveinfo enp3s0 -sdo -map
+./extern/soem/build/samples/slaveinfo/slaveinfo <nic> -sdo -map
 ```
 
 It prints slave identity, state, PDO mapping, and the SDO object dictionary.
@@ -437,7 +519,7 @@ problem is developing before it becomes a fault.
 
 ---
 
-## 11. Exit criteria
+## 12. Exit criteria
 
 - [ ] All slaves enumerate with correct vendor ID, product code, revision
 - [ ] Bus reaches `OPERATIONAL` reliably from cold start, 20 consecutive times

@@ -8,7 +8,7 @@
 // and it is the first time a mistake in scaling, direction or PDO offsets shows
 // up as something physical.
 //
-//   sudo ./build/axis_jog enp3s0 --counts-per-mm 10000 --distance 1 --feed 60
+//   sudo ./build/axis_jog ethX --counts-per-mm 10000 --distance 1 --feed 60
 //
 // RUN IT WITH THE MOTOR OFF THE MACHINE FIRST. A wrong counts-per-mm is a
 // factor-of-anything error in how far the axis goes, and the first place it
@@ -48,6 +48,12 @@ struct Options {
     double ferr_limit = 1.0;   ///< mm
     std::int64_t cycle_us = 1000;
     int cpu = 2;
+    long dc_timeout_ms = 0;   ///< 0 keeps the CyclicTask default
+    long rx_timeout_us = 0;   ///< 0 derives from the cycle
+    long rx_pdo = 0;          ///< 0 keeps the drive's own assignment
+    long tx_pdo = 0;
+    bool set_interp = false;
+    bool custom_map = false;   ///< compose a CSP+feedforward mapping
     bool block_lrw = false;
     bool no_dc = false;
     bool assume_yes = false;
@@ -69,9 +75,21 @@ void usage() {
         "  --ferr F            following error limit in mm (default 1)\n"
         "  --cycle N           cycle time in microseconds (default 1000)\n"
         "  --cpu N             isolated CPU to pin the RT thread to (default 2)\n"
+        "  --dc-timeout N      ms to wait for DC lock before failing (default 10000)\n"
+        "  --rx-timeout N      frame receive timeout, us (default: cycle/4)\n"
         "  --block-lrw         force LRD/LWR instead of LRW (Yaskawa Sigma-7)\n"
         "  --no-dc             run without distributed clocks (diagnostics only)\n"
-        "  --yes               skip the confirmation prompt\n");
+        "  --rx-pdo N          assign this mapping to 0x1C12 in PRE-OP, e.g. 0x1600\n"
+        "  --tx-pdo N          assign this mapping to 0x1C13 in PRE-OP, e.g. 0x1A00\n"
+        "  --set-interp        write 0x60C2 to match the cycle, and verify it took\n"
+        "  --custom-map        COMPOSE a CSP mapping with velocity feedforward into\n"
+        "                      --rx-pdo/--tx-pdo (default 0x1602/0x1A02)\n"
+        "  --yes               skip the confirmation prompt\n"
+        "\n"
+        "The four PRE-OP options change the drive's own configuration. Confirm\n"
+        "the resulting map before trusting a move: reassigning 0x1C12 changes\n"
+        "where target position sits in the frame, and --custom-map REPLACES the\n"
+        "contents of a mapping object rather than choosing between existing ones.\n");
 }
 
 bool parse_double(const char* s, double& out) {
@@ -130,6 +148,10 @@ bool parse_args(int argc, char** argv, Options& o) {
             o.no_dc = true;
         } else if (std::strcmp(a, "--yes") == 0) {
             o.assume_yes = true;
+        } else if (std::strcmp(a, "--set-interp") == 0) {
+            o.set_interp = true;
+        } else if (std::strcmp(a, "--custom-map") == 0) {
+            o.custom_map = true;
         } else if (!has_value) {
             std::printf("missing value for %s\n", a);
             return false;
@@ -165,6 +187,16 @@ bool parse_args(int argc, char** argv, Options& o) {
             if (!parse_slaves(argv[++i], o.slave)) {
                 return false;
             }
+        } else if (std::strcmp(a, "--rx-pdo") == 0 || std::strcmp(a, "--tx-pdo") == 0) {
+            // Base 0, so mapping objects can be given as the manual prints
+            // them: 0x1600, not 5632.
+            char* end = nullptr;
+            const long v = std::strtol(argv[++i], &end, 0);
+            if (end == argv[i] || *end != '\0') {
+                std::printf("bad value for %s: %s\n", a, argv[i]);
+                return false;
+            }
+            (a[2] == 'r' ? o.rx_pdo : o.tx_pdo) = v;
         } else {
             long v = 0;
             if (!parse_int(argv[i + 1], v)) {
@@ -179,6 +211,10 @@ bool parse_args(int argc, char** argv, Options& o) {
                 o.cycle_us = v;
             } else if (std::strcmp(a, "--cpu") == 0) {
                 o.cpu = static_cast<int>(v);
+            } else if (std::strcmp(a, "--dc-timeout") == 0) {
+                o.dc_timeout_ms = v;
+            } else if (std::strcmp(a, "--rx-timeout") == 0) {
+                o.rx_timeout_us = v;
             } else {
                 std::printf("unknown option %s\n", a);
                 return false;
@@ -198,15 +234,58 @@ bool parse_args(int argc, char** argv, Options& o) {
         std::printf("--cycle below 50 us is not credible on any PC\n");
         return false;
     }
+    if (o.custom_map) {
+        // Spare mapping objects by default. Composing over 0x1600 would destroy
+        // a mapping the vendor validated, with no way back short of a power
+        // cycle.
+        if (o.rx_pdo == 0) {
+            o.rx_pdo = 0x1602;
+        }
+        if (o.tx_pdo == 0) {
+            o.tx_pdo = 0x1A02;
+        }
+    }
+    if (o.rx_pdo != 0 && (o.rx_pdo < 0x1600 || o.rx_pdo > 0x17FF)) {
+        std::printf("--rx-pdo must be an RxPDO mapping object, 0x1600..0x17FF\n");
+        return false;
+    }
+    if (o.tx_pdo != 0 && (o.tx_pdo < 0x1A00 || o.tx_pdo > 0x1BFF)) {
+        std::printf("--tx-pdo must be a TxPDO mapping object, 0x1A00..0x1BFF\n");
+        return false;
+    }
     return true;
 }
 
 bool confirm(const Options& o) {
     std::printf(
         "\nAbout to move axis %d (slave %d) by %+.4f mm at %.1f mm/min.\n"
-        "Scaling is %.1f counts/mm -- if that is wrong, so is the distance.\n"
-        "Type 'yes' to proceed: ",
+        "Scaling is %.1f counts/mm -- if that is wrong, so is the distance.\n",
         o.axis, o.slave[o.axis], o.distance_mm, o.feed_mm_min, o.counts_per_mm);
+
+    // Say this before the move, not after. Rewriting the PDO assignment or the
+    // interpolation period changes the drive's stored configuration, and it
+    // stays changed when this tool exits.
+    if (o.rx_pdo != 0 || o.tx_pdo != 0 || o.set_interp) {
+        std::printf("\nThis will also WRITE THE DRIVE'S CONFIGURATION in PRE-OP:\n");
+        if (o.custom_map) {
+            std::printf("  0x%04lX and 0x%04lX (PDO mappings) COMPOSED from scratch\n",
+                        static_cast<unsigned long>(o.rx_pdo),
+                        static_cast<unsigned long>(o.tx_pdo));
+        }
+        if (o.rx_pdo != 0) {
+            std::printf("  0x1C12 (RxPDO assignment) <- 0x%04lX\n",
+                        static_cast<unsigned long>(o.rx_pdo));
+        }
+        if (o.tx_pdo != 0) {
+            std::printf("  0x1C13 (TxPDO assignment) <- 0x%04lX\n",
+                        static_cast<unsigned long>(o.tx_pdo));
+        }
+        if (o.set_interp) {
+            std::printf("  0x60C2 (interpolation time period) <- %" PRId64 " us\n", o.cycle_us);
+        }
+    }
+
+    std::printf("Type 'yes' to proceed: ");
     std::fflush(stdout);
 
     char line[16] = {};
@@ -265,6 +344,25 @@ int main(int argc, char** argv) {
     cfg.bus.use_dc = !o.no_dc;
     cfg.bus.force_block_lrw = o.block_lrw;
 
+    if (o.dc_timeout_ms > 0) {
+        cfg.dc_lock_timeout_ms = static_cast<std::uint32_t>(o.dc_timeout_ms);
+    }
+    if (o.rx_timeout_us > 0) {
+        cfg.bus.rx_timeout_us = static_cast<int>(o.rx_timeout_us);
+    }
+    cfg.bus.preop.rx_pdo_assign = static_cast<std::uint16_t>(o.rx_pdo);
+    cfg.bus.preop.tx_pdo_assign = static_cast<std::uint16_t>(o.tx_pdo);
+    cfg.bus.preop.set_interpolation_period = o.set_interp;
+    if (o.custom_map) {
+        fieldbus::make_csp_mapping(cfg.bus.preop.rx_mapping, cfg.bus.preop.tx_mapping,
+                                   static_cast<std::uint16_t>(o.rx_pdo),
+                                   static_cast<std::uint16_t>(o.tx_pdo));
+        // Composing a mapping is done FOR 0x60B1. If the writes all succeed and
+        // discovery still cannot find it, running anyway would silently give up
+        // the feedforward the whole exercise was about.
+        cfg.require_velocity_feedforward = true;
+    }
+
     cfg.rt.cpu = o.cpu;
     cfg.machine.axis_count = o.axes;
     // Stop at least as hard as we accelerate, or a stop overshoots the move.
@@ -295,14 +393,25 @@ int main(int argc, char** argv) {
     const fieldbus::BusResult r = task->start(cfg);
     if (r != fieldbus::BusResult::Ok) {
         std::printf("start failed: %s\n  %s\n", fieldbus::to_string(r), task->error());
+        if (r == fieldbus::BusResult::InterfaceFailed) {
+            char adapters[2048];
+            if (fieldbus::list_interfaces(adapters, sizeof(adapters)) > 0) {
+                std::printf("\nInterfaces this machine offers:\n%s", adapters);
+            }
+        }
         return 1;
     }
 
     std::printf("%d slaves, waiting for OPERATIONAL...\n", task->bus().slave_count());
 
     ipc::MachineStatus s{};
-    if (!wait_for(*task, [](const ipc::MachineStatus& x) { return x.bus_operational; }, 15000,
-                  s)) {
+    // Wait at least as long as the task itself will spend trying to lock DC,
+    // plus headroom for the OPERATIONAL transition. A fixed 15 s here silently
+    // undercut a 30 s DC allowance and reported a timeout the task had not yet
+    // reached.
+    const int op_wait_ms = static_cast<int>(cfg.dc_lock_timeout_ms) + 15000;
+    if (!wait_for(*task, [](const ipc::MachineStatus& x) { return x.bus_operational; },
+                  op_wait_ms, s)) {
         std::printf("did not reach OPERATIONAL: %s\n", task->error());
         task->stop();
         return 1;

@@ -58,9 +58,14 @@ struct CyclicTaskConfig {
     /// Jitter above this counts as an overrun in the cycle statistics.
     std::int64_t overrun_threshold_ns = 100'000;
 
-    /// Cycles allowed for the DC drift controller to lock before giving up.
-    /// 5000 is five seconds at 1 ms, and twenty at 250 us.
-    std::uint32_t dc_lock_timeout_cycles = 5000;
+    /// Wall time allowed for the DC drift controller to lock before giving up.
+    ///
+    /// In MILLISECONDS, not cycles. A cycle count shortens the allowance
+    /// exactly when the cycle gets shorter and the controller has no less
+    /// settling to do: 5000 cycles is 5 s at 1 ms but 1.25 s at 250 us, so the
+    /// design cycle got a quarter of the patience of the fallback one and
+    /// timed out mid-pull-in.
+    std::uint32_t dc_lock_timeout_ms = 10'000;
 
     /// Refuse to start if a drive does not map 0x60B1.
     ///
@@ -109,6 +114,13 @@ public:
     /// thread has exited.
     [[nodiscard]] const char* error() const noexcept { return error_; }
 
+    /// Why real-time scheduling could not be established, or an empty string if
+    /// it was. Kept apart from error() deliberately: a loop that silently ran
+    /// without SCHED_FIFO explains every timing symptom downstream, and losing
+    /// that to a later, more visible failure is how people chase the wrong bug.
+    [[nodiscard]] const char* rt_status() const noexcept { return rt_status_; }
+    [[nodiscard]] bool is_realtime() const noexcept { return rt_status_[0] == '\0'; }
+
     // --- channels shared with the planner ---
 
     [[nodiscard]] ipc::SetpointQueue& setpoints() noexcept { return setpoints_; }
@@ -155,6 +167,7 @@ private:
     std::atomic<bool> stop_requested_{false};
 
     char error_[192] = {};
+    char rt_status_[192] = {};
 };
 
 }  // namespace frcnc::app

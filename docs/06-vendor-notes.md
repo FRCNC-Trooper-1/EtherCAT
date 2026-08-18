@@ -158,6 +158,151 @@ For a CNC, prefer `0x1A00` over `0x1A01` — it already carries `60F4` (followin
 error) and `6061` (modes display), both of which you want cyclically rather
 than over SDO. See [`04 §4`](04-drive-cia402.md#4-csp-process-data).
 
+### ✅ Sigma-X default assignment — MEASURED
+
+Read off two `SGDXS-xxxxA0xY3503A` drives with `bus_scan`, not taken from an ESI:
+
+| Object | Value | Contents (6 bytes each) |
+|---|---|---|
+| `0x1C12:01` | **`0x1601`** | `6040` Controlword, `607A` Target position |
+| `0x1C13:01` | **`0x1A01`** | `6041` Statusword, `6064` Position actual |
+
+So the Sigma-X ships selecting the **minimal CSP set**, exactly as the Sigma-7
+IgH configurations do. That is enough to move an axis and not enough to
+supervise one: no `6060`, no `6061`, no `60F4`, no `6077`.
+
+`0x1600` / `0x1A00` are richer and are what this controller assigns:
+
+```bash
+sudo ./build/bus_monitor ethX --axes 2 --cycle 4000 --rx-pdo 0x1600 --tx-pdo 0x1A00
+```
+
+**Neither `0x1600` nor `0x1A00` carries `0x60B1` (velocity offset).** Velocity
+feedforward therefore needs a *custom* mapping written into a spare object, not
+just a reassignment.
+
+### ✅ `0x60B1` exists — feedforward is reachable, by composing a mapping
+
+`bus_scan`'s object-dictionary probe, both drives:
+
+| Object | | |
+|---|---|---|
+| `0x60B1` | velocity offset | **present** |
+| `0x60B2` | torque offset | **present** |
+| `0x606C` | velocity actual | **present** |
+
+Every object the controller wants is in the dictionary. What is missing is a
+*predefined mapping* that carries them — a different problem with a different
+fix.
+
+And the fix is available, because the spare mapping objects are **present and
+empty**:
+
+```
+0x1602  2 entries    0x0000:00  0 bits  PADDING   (x2)   = 0 bytes
+0x1603  2 entries    ... empty
+0x1A02  2 entries    ... empty
+0x1A03  3 entries    ... empty
+```
+
+`0x1604`/`0x1A04` and above return `06020000 The object does not exist`, so the
+device offers exactly four mapping objects per direction: two populated by the
+vendor, two free.
+
+> The reported sub-entry count of 2 (3 on `0x1A03`) is the *current* count of an
+> empty object, **not a ceiling** — confirmed by writing: `0x1602` accepted 5
+> entries and `0x1A02` accepted 6.
+
+**Use `--custom-map`.** It composes into `0x1602`/`0x1A02` by default, never over
+a vendor mapping:
+
+| | RxPDO `0x1602` | TxPDO `0x1A02` |
+|---|---|---|
+| | `6040` controlword | `6041` statusword |
+| | `607A` target position | `6064` position actual |
+| | **`60B1` velocity offset** | `606C` velocity actual |
+| | `60B2` torque offset | `60F4` following error |
+| | `6060` modes of operation | `6077` torque actual |
+| | | `6061` modes display |
+| Size | 13 bytes | 17 bytes |
+
+`0x6072` max torque is deliberately **excluded**. Composing our own mapping
+means it is simply not in the image, so the limit stays in the drive's own
+parameters instead of becoming an obligation on the master every cycle — the
+opposite trade from `0x1600`, and the better one.
+
+**✅ CONFIRMED ON HARDWARE.** Both drives accepted the composed mapping and read
+back exactly what was written:
+
+```
+composing 0x1602 (5 entries, 13 bytes) and 0x1A02 (6 entries, 17 bytes)
+slave 1   13 out / 17 in bytes  CSP usable
+  + 0x6060 mode  - 0x6072 max-trq  + 0x60B1 vel-ff  + 0x60B2 trq-ff
+  + 0x6061 mode-disp  + 0x60F4 foll-err  + 0x606C vel-act  + 0x6077 trq-act
+```
+
+Every object the controller wants, and only those. Reached OPERATIONAL in 4.0 s
+— faster than either predefined mapping — and held it for the run.
+
+**This is the mapping to use.** `--custom-map` also switches
+`require_velocity_feedforward` on, so a run that somehow loses `0x60B1` fails at
+start-up rather than quietly running without the feedforward the mapping exists
+to provide.
+
+#### Result of the reassignment — MEASURED
+
+| | `0x1601`/`0x1A01` (default) | `0x1600`/`0x1A00` (assigned) |
+|---|---|---|
+| Process data | 6 out / 6 in | **18 out / 20 in** |
+| `0x6060` modes of operation | — | **✅** |
+| `0x6061` modes display | — | **✅** |
+| `0x60F4` following error | — | **✅** |
+| `0x6077` torque actual | — | **✅** |
+| `0x6072` max torque | — | **✅ — see the warning below** |
+| `0x60B1` velocity offset | — | — |
+| `0x606C` velocity actual | — | — |
+
+Sigma-X `0x1600`/`0x1A00` therefore mirror the Sigma-7 ESI exactly, including
+the trailing pad byte (17 mapped bytes reported as 18, 19 as 20).
+
+With `0x6060` mapped, `0x6061` came back as **8** — the first direct
+confirmation that the drives accept CSP from this master rather than an
+inference from the fact that nothing complained.
+
+### ⚠️ `0x1600` carries `0x6072` — a mapped max torque you MUST write
+
+The single hazard in taking the richer mapping, and it is not obvious, because
+it is a *new obligation* rather than a missing feature.
+
+`0x1600` includes **`0x6072` Max torque**. The process image starts zeroed, so a
+master that assigns this mapping and does not write that entry commands a torque
+limit of **zero**, on every cycle. The axis enables, reports `internal limit
+active` (statusword bit 11), and does not move — a fault that looks like a drive
+problem and is not one.
+
+This is a property of the process image, not an observation: an RxPDO entry the
+master does not write holds whatever the image holds, and the image starts at
+zero. It needs no bench evidence and has none.
+
+> **A retracted claim, kept because the reasoning is the trap.** The statusword
+> on the bench read `0x0E08` — Fault + Remote + Target reached + **Internal
+> limit active** — and bit 11 was first read as confirmation of the zero torque
+> limit. It is not. The comparison run with `0x1601`/`0x1A01`, where `0x6072` is
+> not mapped at all and nothing can be commanding zero, reports the same
+> `0x0E08`; and bit 11 is already set in PRE-OP, before any PDO write takes
+> effect. It belongs to the A.C90 encoder alarm. A symptom that fits a
+> hypothesis is not evidence for it until the case without the cause has been
+> checked.
+
+`AxisConfig::max_torque_per_mille` handles it, defaulting to **1000** (100% of
+rated). That is conservative in both directions — it prevents the zero, and it
+*lowers* the limit relative to the several-times-rated the drive powers up with.
+`CyclicTask` refuses to start if `0x6072` is mapped and the value is 0, because
+once the object is in the RxPDO there is no such thing as leaving it alone.
+
+Its neighbours are harmless: `0x60FF` target velocity and `0x6071` target torque
+are ignored by the drive in CSP, so zero costs nothing.
+
 ### ✅ Cycle time and `0x60C2` — resolved for both generations
 
 **Supported DC cycles:**
@@ -196,6 +341,19 @@ cycle; the drive follows.
 > master cycle without writing `0x60C2`, the drive expects a new setpoint every
 > 125 µs and will interpolate against a period eight times shorter than reality.
 > **Always write `0x60C2` explicitly.**
+
+Confirmed on the bench: both drives read back `0x60C2 = 125 µs` out of the box.
+`--set-interp` writes it to match the master cycle and verifies the readback —
+see [`03 §10`](03-ethercat-bringup.md#10-writing-configuration-in-pre-op).
+
+One encoding difference from the table above, and it is not a discrepancy:
+`encode_interpolation_period()` emits 1 ms as **(1, −3)** rather than (100, −5).
+Both are inside the documented ranges (`:01` is 1..250, `:02` is −6..−3) and
+both are exactly 1 ms. Whole milliseconds take the `−3` form because that is
+what the drive itself reports for 4 ms, which keeps a readback comparison
+legible in a log. Note the units range is **1 to 250**, narrower than the
+UNSIGNED8 type — a cycle needing 251..255 units is refused by the drive, and the
+readback check reports it rather than letting it pass.
 
 ### Distributed Clocks
 
@@ -387,9 +545,14 @@ per-subindex on `0x06010004`.
    parameter write access, or firmware. Get the BTO datasheet from Yaskawa
    quoting the full model string. **If no one will produce that document, treat
    the part as unqualified.**
-2. **Sigma-X product code** (`1018h:02`) — the manual section exists at p636 but
-   the value was not captured. Read it off the drive with `slaveinfo`.
+2. ~~**Sigma-X product code** (`1018h:02`)~~ — **resolved by `bus_scan`:**
+   vendor `0x00000539`, product code `0x02200901`, revision `0x01055030`, on
+   both `SGDXS-xxxxA0xY3503A` units.
 3. **Sigma-X native encoder resolution** — see the compatibility-mode note above.
+4. ~~**Will the drive accept a composed mapping?**~~ — **yes, confirmed.**
+   `0x1602` took 5 entries / 13 bytes and `0x1A02` took 6 / 17, read back
+   verbatim, with `0x60B1` in the image. Velocity feedforward is available on
+   these drives.
 
 > **Note on `10F1h` (Sync error setting).** Present in the object dictionary.
 > This is the knob behind the Sigma-X PRE-OP drop-out workaround. Treat a

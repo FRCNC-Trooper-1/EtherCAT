@@ -51,7 +51,7 @@ are directly in your jitter path.**
 
 ```bash
 lspci -nn | grep -i ethernet          # record the [8086:1533]-style ID
-ethtool -i enp3s0                     # record driver and firmware version
+ethtool -i <nic>                     # record driver and firmware version
 ```
 
 ---

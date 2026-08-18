@@ -404,10 +404,41 @@ void test_mode_is_commanded() {
     CHECK(out.mode == 8);  // CSP
 }
 
+void test_max_torque_is_commanded_on_every_path() {
+    // 0x6072 lives in the RxPDO of any richer mapping, and the process image
+    // starts zeroed. An output that is only populated while things are going
+    // well would drop the torque limit to zero at exactly the moment the axis
+    // is trying to decelerate under quick stop -- so this must hold when
+    // disabled, when faulted, and when the bus data is invalid.
+    AxisConfig cfg = basic_config();
+    cfg.max_torque_per_mille = 800;
+
+    AxisController ax;
+    ax.configure(cfg);
+    AxisCommand idle;
+
+    CHECK(ax.update(inputs(kSwSwitchOnDisabled, 0), idle).max_torque == 800);
+    CHECK(ax.update(inputs(kSwFault, 0), idle).max_torque == 800);
+
+    AxisInputs dead;
+    dead.pdo_valid = false;
+    CHECK(ax.update(dead, idle).max_torque == 800);
+
+    ax.request(Request::Enable);
+    for (int i = 0; i < 10; i++) {
+        CHECK(ax.update(inputs(kSwOperationEnabled, 0), command(0.0)).max_torque == 800);
+    }
+
+    ax.request(Request::QuickStop);
+    CHECK(ax.update(inputs(kSwOperationEnabled, 0), idle).max_torque == 800);
+}
+
 }  // namespace
 
 int main() {
     std::printf("test_axis_controller\n");
+
+    test_max_torque_is_commanded_on_every_path();
 
     test_unit_conversion_roundtrip();
     test_inverted_axis();

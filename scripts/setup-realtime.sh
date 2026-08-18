@@ -23,7 +23,7 @@ fi
 
 if [[ -z "$ETH" ]]; then
     echo "Usage: sudo $0 <ethercat-interface> [isolated-cpu]" >&2
-    echo "Example: sudo $0 enp3s0 2" >&2
+    echo "Example: sudo $0 <nic> 2" >&2
     exit 1
 fi
 

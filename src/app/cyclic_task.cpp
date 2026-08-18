@@ -9,6 +9,11 @@ namespace frcnc::app {
 
 namespace fb = fieldbus;
 
+/// Cycles between OPERATIONAL polls. Each poll issues datagrams, and slaves
+/// take milliseconds to accept the transition, so polling every cycle is pure
+/// cost on the deadline.
+constexpr std::uint32_t kOpPollInterval = 50;
+
 const char* to_string(TaskState s) noexcept {
     switch (s) {
         case TaskState::Stopped:      return "Stopped";
@@ -57,7 +62,15 @@ fb::BusResult CyclicTask::start(const CyclicTaskConfig& cfg) {
 
     r = bus_.configure();
     if (r != fb::BusResult::Ok) {
-        fail(fb::to_string(r));
+        // "PreOpConfigFailed" on its own is unactionable; the bus knows which
+        // slave refused which object, so say that instead.
+        if (r == fb::BusResult::PreOpConfigFailed && bus_.preop_error()[0] != '\0') {
+            char msg[192];
+            std::snprintf(msg, sizeof(msg), "PRE-OP config: %s", bus_.preop_error());
+            fail(msg);
+        } else {
+            fail(fb::to_string(r));
+        }
         bus_.close();
         return r;
     }
@@ -69,6 +82,20 @@ fb::BusResult CyclicTask::start(const CyclicTaskConfig& cfg) {
             std::snprintf(msg, sizeof(msg),
                           "axis %d (slave %d): PDO map is not usable for CSP", i,
                           cfg_.axis_slave[i]);
+            fail(msg);
+            bus_.close();
+            return fb::BusResult::MappingFailed;
+        }
+        // A mapped 0x6072 that nobody writes is a commanded torque limit of
+        // zero, every cycle. Refuse rather than start: the axis would enable,
+        // report "internal limit active", and sit there — a fault mode that
+        // looks like a drive problem and is not one.
+        if (axis_[i].pdo.max_torque.present() &&
+            cfg_.machine.axis[i].max_torque_per_mille == 0) {
+            char msg[160];
+            std::snprintf(msg, sizeof(msg),
+                          "axis %d (slave %d): 0x6072 is mapped but max_torque_per_mille "
+                          "is 0, which commands ZERO torque", i, cfg_.axis_slave[i]);
             fail(msg);
             bus_.close();
             return fb::BusResult::MappingFailed;
@@ -192,6 +219,11 @@ void CyclicTask::write_outputs(const MachineOutputs& out) noexcept {
         if (b.pdo.torque_offset.present()) {
             fb::write_i16(b.outputs, b.pdo.torque_offset, o.torque_offset);
         }
+        // Only when the drive maps it AND a limit was configured. Writing zero
+        // here is not "no limit", it is a limit of zero — see AxisPdoMap.
+        if (b.pdo.max_torque.present() && o.max_torque != 0) {
+            fb::write_u16(b.outputs, b.pdo.max_torque, o.max_torque);
+        }
     }
 }
 
@@ -204,19 +236,32 @@ void CyclicTask::run() noexcept {
     // scheduling will pass every bench test and fault under load.
     const std::string rt_error = rt::configure_current_thread(cfg_.rt);
     if (!rt_error.empty()) {
-        std::snprintf(error_, sizeof(error_), "not real-time: %s", rt_error.c_str());
+        // Its own field, not error_. A later failure would overwrite that one,
+        // and "the loop was never real-time" is the fact that explains all the
+        // others.
+        std::snprintf(rt_status_, sizeof(rt_status_), "%s", rt_error.c_str());
     }
 
     rt::CycleTimer timer(cfg_.bus.cycle_ns, cfg_.overrun_threshold_ns);
     timer.start();
 
     std::uint32_t settle_cycles = 0;
+    bool requested_op = false;
+
+    // Convert the wall-clock allowance into cycles once, here, where the cycle
+    // period is known.
+    const std::uint32_t dc_timeout_cycles =
+        cfg_.dc_lock_timeout_ms == 0
+            ? 0
+            : static_cast<std::uint32_t>((static_cast<std::int64_t>(cfg_.dc_lock_timeout_ms) *
+                                          1'000'000LL) /
+                                         (cfg_.bus.cycle_ns > 0 ? cfg_.bus.cycle_ns : 1));
     std::uint32_t shutdown_left = 0;
     bool operational = false;
     bool shutting_down = false;
 
     for (;;) {
-        (void)timer.wait_next();
+        const std::int64_t jitter_ns = timer.wait_next();
 
         const fb::ExchangeStatus st = bus_.exchange();
 
@@ -233,16 +278,31 @@ void CyclicTask::run() noexcept {
         // precondition for OPERATIONAL that most bring-ups miss.
         if (!operational && !shutting_down) {
             const bool dc_ready = !bus_.dc_available() || bus_.dc().locked();
-            if (dc_ready) {
-                const fb::BusResult r = bus_.go_operational();
+            if (!requested_op && dc_ready) {
+                // REQUEST, do not wait. go_operational() waits up to
+                // state_timeout_us for the transition, and 200 ms inside a 1 ms
+                // loop is a two-hundred-cycle overrun -- which is exactly what
+                // it produced the first time a run got this far.
+                const fb::BusResult r = bus_.request_operational();
                 if (r != fb::BusResult::Ok) {
                     fail(fb::to_string(r));
                     break;
                 }
-                operational = true;
-                state_.store(TaskState::Running, std::memory_order_release);
-            } else if (cfg_.dc_lock_timeout_cycles != 0 &&
-                       ++settle_cycles > cfg_.dc_lock_timeout_cycles) {
+                requested_op = true;
+                settle_cycles = 0;
+            } else if (requested_op) {
+                // Polling costs datagrams, so do it every so often rather than
+                // every cycle. Slaves take milliseconds to accept OP.
+                if (++settle_cycles % kOpPollInterval == 0) {
+                    if (bus_.poll_operational()) {
+                        operational = true;
+                        state_.store(TaskState::Running, std::memory_order_release);
+                    } else if (dc_timeout_cycles != 0 && settle_cycles > dc_timeout_cycles) {
+                        fail("slaves did not reach OPERATIONAL");
+                        break;
+                    }
+                }
+            } else if (dc_timeout_cycles != 0 && ++settle_cycles > dc_timeout_cycles) {
                 fail("distributed clocks did not lock");
                 break;
             }
@@ -265,7 +325,7 @@ void CyclicTask::run() noexcept {
         BusInputs in;
         read_inputs(in, st);
 
-        machine_.set_timing(timer.stats().max_jitter_ns, timer.stats().max_jitter_ns);
+        machine_.set_timing(jitter_ns, timer.stats().max_jitter_ns);
         const MachineOutputs out = machine_.update(in);
         write_outputs(out);
 
