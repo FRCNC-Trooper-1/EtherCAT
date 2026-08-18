@@ -181,6 +181,14 @@ in-kernel driver:
 | RTL8168h | 1 GbE | 4 ms | 29 / 15,000 | 0.19 % |
 | RTL8168h — full PDO map | 1 GbE | 4 ms | 15 / 15,001 | 0.10 % |
 | RTL8168h — minimal map | 1 GbE | 4 ms | 56 / 15,001 | 0.37 % |
+| RTL8168h — full PDO map | 1 GbE | 4 ms | 41 / 15,001 | 0.27 % |
+
+The last three rows are the same NIC in one session. **Two identical
+configurations produced 0.10 % and 0.27 %**, so single-run loss figures on this
+driver carry roughly a 3× error bar and no two of them should be compared
+directly. The disqualification does not rest on any one of them; it rests on
+every sample being one to two orders of magnitude away from the zero the
+acceptance criterion asks for.
 
 **Three physical cards, two chip generations, one driver.** Newer silicon changed
 nothing; a second sample of the same part halved the rate without approaching
@@ -260,34 +268,31 @@ links — yet slave 1's **processing unit** rejected 18 frames, and the same 18
 appear as forwarded errors at slave 2's IN port and back at slave 1's port 1 on
 the return path. So the wire was electrically intact and the frame was not.
 
-**The comparison run has been made, and it isolates the frame length.** Same
-NIC, same 4 ms cycle, same session, assignment forced back to `0x1601`/`0x1A01`:
+**Not isolated. The run-to-run variance is as large as the effect.** Three runs
+on the same NIC at the same 4 ms cycle in the same session:
 
-| | short frame (6/6) | full map (18/20) |
-|---|---|---|
-| Lost frames | **56** / 15,001 = 0.37 % | 15 / 15,001 = 0.10 % |
-| Slave `pu` errors | **0** | 18 |
-| Forwarded errors | **0** | 18 |
-| Slave verdict | both **clean** | pu + forwarded |
-| DC best lock run | 157 cycles | 122 cycles |
+| Run | Assignment | Frame | Lost frames | Slave 1 `pu` |
+|---|---|---|---|---|
+| 1 | `0x1600`/`0x1A00` | 18/20 | 15 / 15,001 = 0.10 % | **18** |
+| 2 | `0x1601`/`0x1A01` | 6/6 | 56 / 15,001 = 0.37 % | **0** |
+| 3 | `0x1600`/`0x1A00` | 18/20 | 41 / 15,001 = 0.27 % | **2** |
 
-The processing-unit errors appear **only** with the longer frame. Both drives
-report entirely clean counters with the short one.
+Runs 1 and 3 are the **same configuration** and differ by 2.7× in lost frames
+and 9× in `pu`. Any difference attributed to the frame length has to be larger
+than that, and this one is not.
 
-**The mechanism is not identified, and no story is offered for it here.** What
-is established is the correlation, on one run each. What is not established is
-why a frame that every port received with intact signalling was then rejected by
-a processing unit.
+What survives: `pu > 0` has appeared only with the full map, on two runs against
+one. That is a hint worth keeping, not a result. What does not survive is the
+earlier claim in this file that the comparison *isolated* the frame length — one
+run per configuration was not enough, and the third run is what showed it.
 
-Note also that the loss rate moved the *opposite* way — the short frame lost
-nearly four times as many. Two runs is not enough to call that difference real,
-and it is recorded only to prevent "longer frame, more damage" being read into
-the table above.
+The mechanism remains unidentified: a frame that every port received with intact
+signalling was then rejected by a processing unit. No story is offered for it.
 
-**Next step is not further investigation on this NIC.** Both symptoms sit on top
-of `r8169`, which is already disqualified. Re-run the comparison on the Intel
-i210/i211; if the processing-unit errors disappear there, this was another
-Realtek symptom and not worth chasing further.
+**Next step is the Intel NIC, not more runs here.** Settling this by replication
+would take many runs per configuration, and all of them would be measuring a
+driver that is already disqualified. If the processing-unit errors disappear on
+`igb`, this was another Realtek symptom and the question dissolves.
 
 > **Correction to the tooling, not just the record.** `PortErrors::detected_error()`
 > originally ignored `processing_unit_error`, so `bus_monitor` reported *"No port

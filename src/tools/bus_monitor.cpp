@@ -564,11 +564,15 @@ int main(int argc, char** argv) {
                 "  electrically intact and malformed.\n"
                 "\n"
                 "  This is NOT a cabling verdict, and it is not yet a NIC verdict\n"
-                "  either. Re-run at the same cycle with the PDO assignment left\n"
-                "  alone (--rx-pdo 0x1601 --tx-pdo 0x1A01 on Yaskawa) and compare:\n"
-                "  if pu drops to zero with the shorter frame, the frame length is\n"
-                "  implicated; if it does not, this is the same transmit-side fault\n"
-                "  as the losses above.\n");
+                "  either. To compare against a shorter frame, re-run at the same\n"
+                "  cycle with a minimal assignment (--rx-pdo 0x1601 --tx-pdo 0x1A01\n"
+                "  on Yaskawa).\n"
+                "\n"
+                "  Run each configuration SEVERAL TIMES before concluding anything.\n"
+                "  Measured on the bench NIC here, two runs of one identical\n"
+                "  configuration gave pu counts of 18 and 2, and loss rates of\n"
+                "  0.10%% and 0.27%%. A single pair of runs cannot separate an effect\n"
+                "  from that.\n");
         } else if (any_forwarded) {
             std::printf(
                 "\n  No device found damage itself: every non-zero counter is a\n"
