@@ -161,13 +161,18 @@ in-kernel driver:
 | Controller | Class | Cycle | Errors | Loss rate |
 |---|---|---|---|---|
 | RTL8168h (onboard) | 1 GbE, 2015 | 1 ms | 5588 / 250,000 | **2.24 %** |
-| **RTL8126A (add-in card)** | **5 GbE, 2024** | **1 ms** | **229 / 10,000** | **2.29 %** |
-| RTL8126A | 5 GbE | 250 µs | 842 / 40,000 | 2.11 % |
+| RTL8126A — card #1 | 5 GbE, 2024 | 1 ms | 229 / 10,000 | **2.29 %** |
+| **RTL8126A — card #2** | **5 GbE, 2024** | **1 ms** | **104 / 10,000** | **1.04 %** |
+| RTL8126A — card #1 | 5 GbE | 250 µs | 842 / 40,000 | 2.11 % |
 | RTL8168h | 1 GbE | 4 ms | 29 / 15,000 | 0.19 % |
 
-Replacing the silicon with a far newer part changed the loss rate by **2 %**.
-That rules out the chip: what both parts share is `r8169`, and that is where the
-frames are going. Both are usable at 4 ms and neither at 1 ms or below.
+**Three physical cards, two chip generations, one driver.** Newer silicon changed
+nothing; a second sample of the same part halved the rate without approaching
+zero. What every case shares is `r8169`, and that is where the frames are going.
+All are usable at 4 ms and none at 1 ms or below.
+
+The best of the three still loses roughly one frame in a hundred at 1 ms. For
+context, the acceptance criterion is **zero** over 24 hours.
 
 The host is not implicated, and was measured rather than assumed:
 
