@@ -357,6 +357,10 @@ int main(int argc, char** argv) {
         fieldbus::make_csp_mapping(cfg.bus.preop.rx_mapping, cfg.bus.preop.tx_mapping,
                                    static_cast<std::uint16_t>(o.rx_pdo),
                                    static_cast<std::uint16_t>(o.tx_pdo));
+        // Composing a mapping is done FOR 0x60B1. If the writes all succeed and
+        // discovery still cannot find it, running anyway would silently give up
+        // the feedforward the whole exercise was about.
+        cfg.require_velocity_feedforward = true;
     }
 
     cfg.rt.cpu = o.cpu;

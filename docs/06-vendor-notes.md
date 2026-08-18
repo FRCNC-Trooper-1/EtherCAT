@@ -210,9 +210,8 @@ device offers exactly four mapping objects per direction: two populated by the
 vendor, two free.
 
 > The reported sub-entry count of 2 (3 on `0x1A03`) is the *current* count of an
-> empty object, and whether it is also a ceiling is not answerable by reading —
-> only by writing. `Bus::write_mapping()` reports which sub-entry was refused if
-> it is, rather than blaming the object as a whole.
+> empty object, **not a ceiling** — confirmed by writing: `0x1602` accepted 5
+> entries and `0x1A02` accepted 6.
 
 **Use `--custom-map`.** It composes into `0x1602`/`0x1A02` by default, never over
 a vendor mapping:
@@ -232,9 +231,23 @@ means it is simply not in the image, so the limit stays in the drive's own
 parameters instead of becoming an obligation on the master every cycle — the
 opposite trade from `0x1600`, and the better one.
 
-Not yet confirmed on hardware: the drive may refuse a mapping this size, or
-allow fewer sub-entries than requested. Both failures are named by
-`Bus::preop_error()` down to the sub-entry.
+**✅ CONFIRMED ON HARDWARE.** Both drives accepted the composed mapping and read
+back exactly what was written:
+
+```
+composing 0x1602 (5 entries, 13 bytes) and 0x1A02 (6 entries, 17 bytes)
+slave 1   13 out / 17 in bytes  CSP usable
+  + 0x6060 mode  - 0x6072 max-trq  + 0x60B1 vel-ff  + 0x60B2 trq-ff
+  + 0x6061 mode-disp  + 0x60F4 foll-err  + 0x606C vel-act  + 0x6077 trq-act
+```
+
+Every object the controller wants, and only those. Reached OPERATIONAL in 4.0 s
+— faster than either predefined mapping — and held it for the run.
+
+**This is the mapping to use.** `--custom-map` also switches
+`require_velocity_feedforward` on, so a run that somehow loses `0x60B1` fails at
+start-up rather than quietly running without the feedforward the mapping exists
+to provide.
 
 #### Result of the reassignment — MEASURED
 
@@ -536,10 +549,10 @@ per-subindex on `0x06010004`.
    vendor `0x00000539`, product code `0x02200901`, revision `0x01055030`, on
    both `SGDXS-xxxxA0xY3503A` units.
 3. **Sigma-X native encoder resolution** — see the compatibility-mode note above.
-4. **Will the drive accept a composed mapping?** `0x1602`/`0x1A02` exist and are
-   empty, and every object wanted is in the dictionary — but the sub-entry
-   ceiling and the maximum mapped size are both unmeasured. `--custom-map` is
-   built and untried.
+4. ~~**Will the drive accept a composed mapping?**~~ — **yes, confirmed.**
+   `0x1602` took 5 entries / 13 bytes and `0x1A02` took 6 / 17, read back
+   verbatim, with `0x60B1` in the image. Velocity feedforward is available on
+   these drives.
 
 > **Note on `10F1h` (Sync error setting).** Present in the object dictionary.
 > This is the knob behind the Sigma-X PRE-OP drop-out workaround. Treat a

@@ -211,15 +211,19 @@ At a **4 ms** cycle the RTL8126A (card #2) is good enough to develop against:
 
 DC needed ~17 s to pull in, past the 10 s default — `--dc-timeout 30000`.
 
-The **onboard RTL8168h is equally usable** at 4 ms and is what the PDO
-reassignment work was done on: OPERATIONAL at 16 s with the full map, held for
-the whole run, 0.10 % loss, zero overruns, post-lock DC excursion 5.3 % of the
-Sync0 shift. Either NIC gives a working Phase 3 rig. Run with the full map:
+The **onboard RTL8168h is equally usable** at 4 ms and is what the PDO work was
+done on: OPERATIONAL held for every run, 0.10–0.37 % loss, zero overruns,
+post-lock DC excursion 5–7 % of the Sync0 shift. Either NIC gives a working
+Phase 3 rig. Use the composed mapping:
 
 ```bash
 sudo ./build/bus_monitor ethX --axes 2 --cycle 4000 --duration 60 \
-     --dc-timeout 30000 --rx-pdo 0x1600 --tx-pdo 0x1A00 --set-interp
+     --dc-timeout 30000 --custom-map --set-interp
 ```
+
+That is the fastest configuration measured here to reach OPERATIONAL — 4.0 s,
+against 7 s for the predefined full map and 6 s for the minimal one — and the
+only one carrying `0x60B1`.
 
 This is **not** an acceptance pass: lock is acquired but not sustained, and the
 loss rate is not zero. It is a working rig for Phase 3, where cycle time affects
@@ -276,15 +280,22 @@ on the same NIC at the same 4 ms cycle in the same session:
 | 1 | `0x1600`/`0x1A00` | 18/20 | 15 / 15,001 = 0.10 % | **18** |
 | 2 | `0x1601`/`0x1A01` | 6/6 | 56 / 15,001 = 0.37 % | **0** |
 | 3 | `0x1600`/`0x1A00` | 18/20 | 41 / 15,001 = 0.27 % | **2** |
+| 4 | composed `0x1602`/`0x1A02` | 13/17 | 55 / 15,001 = 0.37 % | **0** |
 
 Runs 1 and 3 are the **same configuration** and differ by 2.7× in lost frames
 and 9× in `pu`. Any difference attributed to the frame length has to be larger
 than that, and this one is not.
 
-What survives: `pu > 0` has appeared only with the full map, on two runs against
-one. That is a hint worth keeping, not a result. What does not survive is the
-earlier claim in this file that the comparison *isolated* the frame length — one
-run per configuration was not enough, and the third run is what showed it.
+What survives: `pu > 0` has appeared only at 18/20 bytes, twice out of two,
+while both smaller frames — 6/6 and the composed 13/17 — came back with every
+slave clean. That is a hint worth keeping, not a result; two runs at one size
+against one each at two others cannot carry more than that. What does not
+survive is the earlier claim in this file that the comparison *isolated* the
+frame length — one run per configuration was not enough, and run 3 is what
+showed it.
+
+Note also that runs 2 and 4 lost frames at an identical rate with frames of
+very different length, so **loss and `pu` are not the same phenomenon**.
 
 The mechanism remains unidentified: a frame that every port received with intact
 signalling was then rejected by a processing unit. No story is offered for it.
