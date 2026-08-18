@@ -133,6 +133,12 @@ Lock is **acquired but not continuously held** on this NIC. Phase excursions of
 > `peak_error_since_lock_ns()` separately, and `bus_monitor` prints it as a
 > percentage of the Sync0 shift — the only ratio that decides whether a frame
 > still beats Sync0. Compare against that line, not against the combined peak.
+>
+> The split settled it on the next run: combined peak **968 µs**, essentially the
+> whole Sync0 shift and pure pull-in transient — while the peak *since lock* was
+> **53 µs, 5.3 % of the shift**. Post-lock excursions on this NIC are in the
+> tens of microseconds against a 1 ms budget, which is the figure the earlier
+> 8–12 µs observations belong alongside.
 
 That is not by itself a fault, and the distinction matters:
 
@@ -174,6 +180,7 @@ in-kernel driver:
 | RTL8126A — card #1 | 5 GbE | 250 µs | 842 / 40,000 | 2.11 % |
 | RTL8168h | 1 GbE | 4 ms | 29 / 15,000 | 0.19 % |
 | RTL8168h — full PDO map | 1 GbE | 4 ms | 15 / 15,001 | 0.10 % |
+| RTL8168h — minimal map | 1 GbE | 4 ms | 56 / 15,001 | 0.37 % |
 
 **Three physical cards, two chip generations, one driver.** Newer silicon changed
 nothing; a second sample of the same part halved the rate without approaching
@@ -195,6 +202,16 @@ At a **4 ms** cycle the RTL8126A (card #2) is good enough to develop against:
 | Overruns | 0, mean jitter 4.5 µs |
 
 DC needed ~17 s to pull in, past the 10 s default — `--dc-timeout 30000`.
+
+The **onboard RTL8168h is equally usable** at 4 ms and is what the PDO
+reassignment work was done on: OPERATIONAL at 16 s with the full map, held for
+the whole run, 0.10 % loss, zero overruns, post-lock DC excursion 5.3 % of the
+Sync0 shift. Either NIC gives a working Phase 3 rig. Run with the full map:
+
+```bash
+sudo ./build/bus_monitor ethX --axes 2 --cycle 4000 --duration 60 \
+     --dc-timeout 30000 --rx-pdo 0x1600 --tx-pdo 0x1A00 --set-interp
+```
 
 This is **not** an acceptance pass: lock is acquired but not sustained, and the
 loss rate is not zero. It is a working rig for Phase 3, where cycle time affects
@@ -243,21 +260,34 @@ links — yet slave 1's **processing unit** rejected 18 frames, and the same 18
 appear as forwarded errors at slave 2's IN port and back at slave 1's port 1 on
 the return path. So the wire was electrically intact and the frame was not.
 
-**This has not been isolated, and it is recorded as open rather than explained.**
-The honest reading is only that the first mark appears at slave 1's processing
-unit, not at any receiver. Two candidates, neither eliminated:
+**The comparison run has been made, and it isolates the frame length.** Same
+NIC, same 4 ms cycle, same session, assignment forced back to `0x1601`/`0x1A01`:
 
-1. The same transmit-side `r8169` fault as the frame losses, now visible at a
-   second counter because the larger frame gives it more to damage.
-2. Something specific to the longer frame.
+| | short frame (6/6) | full map (18/20) |
+|---|---|---|
+| Lost frames | **56** / 15,001 = 0.37 % | 15 / 15,001 = 0.10 % |
+| Slave `pu` errors | **0** | 18 |
+| Forwarded errors | **0** | 18 |
+| Slave verdict | both **clean** | pu + forwarded |
+| DC best lock run | 157 cycles | 122 cycles |
 
-The comparison that separates them has not been run: the same cycle, same NIC,
-with the assignment left at `0x1601`/`0x1A01`. `bus_monitor` now prints exactly
-that instruction when it sees this pattern.
+The processing-unit errors appear **only** with the longer frame. Both drives
+report entirely clean counters with the short one.
 
-Note the loss rate itself did **not** get worse with the bigger frame — 0.10 %
-against 0.19 % on the same NIC at the same cycle — which is mild evidence
-against the frame length being the cause.
+**The mechanism is not identified, and no story is offered for it here.** What
+is established is the correlation, on one run each. What is not established is
+why a frame that every port received with intact signalling was then rejected by
+a processing unit.
+
+Note also that the loss rate moved the *opposite* way — the short frame lost
+nearly four times as many. Two runs is not enough to call that difference real,
+and it is recorded only to prevent "longer frame, more damage" being read into
+the table above.
+
+**Next step is not further investigation on this NIC.** Both symptoms sit on top
+of `r8169`, which is already disqualified. Re-run the comparison on the Intel
+i210/i211; if the processing-unit errors disappear there, this was another
+Realtek symptom and not worth chasing further.
 
 > **Correction to the tooling, not just the record.** `PortErrors::detected_error()`
 > originally ignored `processing_unit_error`, so `bus_monitor` reported *"No port

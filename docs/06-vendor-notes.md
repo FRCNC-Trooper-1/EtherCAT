@@ -214,9 +214,19 @@ limit of **zero**, on every cycle. The axis enables, reports `internal limit
 active` (statusword bit 11), and does not move — a fault that looks like a drive
 problem and is not one.
 
-Observed on the bench: with no motors attached the statusword read `0x0E08`,
-which is Fault + Remote + Target reached + **Internal limit active**. The fault
-bit is the expected A.C90 encoder alarm; bit 11 is this.
+This is a property of the process image, not an observation: an RxPDO entry the
+master does not write holds whatever the image holds, and the image starts at
+zero. It needs no bench evidence and has none.
+
+> **A retracted claim, kept because the reasoning is the trap.** The statusword
+> on the bench read `0x0E08` — Fault + Remote + Target reached + **Internal
+> limit active** — and bit 11 was first read as confirmation of the zero torque
+> limit. It is not. The comparison run with `0x1601`/`0x1A01`, where `0x6072` is
+> not mapped at all and nothing can be commanding zero, reports the same
+> `0x0E08`; and bit 11 is already set in PRE-OP, before any PDO write takes
+> effect. It belongs to the A.C90 encoder alarm. A symptom that fits a
+> hypothesis is not evidence for it until the case without the cause has been
+> checked.
 
 `AxisConfig::max_torque_per_mille` handles it, defaulting to **1000** (100% of
 rated). That is conservative in both directions — it prevents the zero, and it
